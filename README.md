@@ -4,7 +4,7 @@
 > This repository is intended as a portfolio / research project in aging and translational bioinformatics.
 
 ## Overview
-omix-exosome-rejuvenation is an exploratory v0.1 pipeline to analyze primate rejuvenation and exosome-mediated effects from public OMIX datasets.
+Omix-exosome-rejuvenation is an exploratory v0.1 pipeline to analyze primate rejuvenation and exosome-mediated effects from public OMIX datasets.
 It implements robust data loading/guardrails, a lightweight transcriptomic clock trained on bulk tissues, plasma proteomics–based state scores, and a first-pass estimate of the exosome-attributable fraction of rejuvenation.
 The code is research-oriented, not an official pipeline, and focuses on transparency and reproducibility rather than definitive biological claims.
 This project explores cross-species translational signals between mouse and primate
