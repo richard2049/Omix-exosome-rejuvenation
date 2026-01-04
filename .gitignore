@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env/
+
+# R
+.Rhistory
+.Rproj.user/
+.RData
+
+# Data (no version large raw datasets)
+data/raw/
+data/*.zip
+data/*.idat
+data/*_beta_matrix.csv
+data/*_beta_matrix_named_partial.csv
+
+# Other big stuff
+*.rds
+*.RDS
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.pkl
