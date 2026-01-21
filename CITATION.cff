@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite this repository."
+title: "SRSC: Exploratory cross-species translational analysis of exosome interventions"
+authors:
+  - family-names: "Marín Bautista"
+    given-names: "Ricardo"
+date-released: 2025-12-28
+version: "0.1.0"
