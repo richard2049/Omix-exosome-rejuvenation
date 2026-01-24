@@ -15,6 +15,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from .logging_utils import get_logger
+import numpy as np
 
 logger = get_logger(__name__)
 
@@ -103,3 +104,110 @@ def plot_plasma_biomarker_ranking(
     plt.close()
 
     logger.info("Saved plasma biomarker ranking plot: %s", outpath)
+
+def plot_age_scatter(
+    meta: pd.DataFrame,
+    chrono_col: str,
+    pred_col: str,
+    out_path: Path,
+) -> None:
+    """
+    Scatter plot of chronological vs predicted age
+    (typically using cross-validated predictions).
+
+    Parameters
+    ----------
+    meta : DataFrame
+        Must contain `chrono_col` and `pred_col`.
+    chrono_col : str
+        Column with chronological age in years.
+    pred_col : str
+        Column with predicted age (e.g. CV predictions).
+    out_path : Path
+        Where to save the PNG.
+    """
+    import matplotlib.pyplot as plt
+
+    df = meta[[chrono_col, pred_col]].dropna().copy()
+    if df.empty:
+        logger.warning("plot_age_scatter: no data after dropping NaNs.")
+        return
+
+    x = df[chrono_col].astype(float).values
+    y = df[pred_col].astype(float).values
+
+    plt.figure(figsize=(8, 6))
+    plt.scatter(x, y, alpha=0.6)
+
+    # Refference diagonal 1:1
+    xy_min = min(x.min(), y.min())
+    xy_max = max(x.max(), y.max())
+    plt.plot([xy_min, xy_max], [xy_min, xy_max], linestyle="--")
+
+    plt.xlabel("Chronological age (years)")
+    plt.ylabel("Predicted age (years, CV)")
+    plt.title("Aging clock: chronological vs predicted age")
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+def plot_rejuvenation_by_group(
+    meta: pd.DataFrame,
+    group_col: str,
+    rejuvenation_col: str,
+    out_path: Path,
+    tissue_col: Optional[str] = None,
+) -> None:
+    """
+    Boxplot + jitter of rejuvenation scores by group.
+
+    Parameters
+    ----------
+    meta : DataFrame
+        Must contain `group_col` and `rejuvenation_col`.
+    group_col : str
+        Column with treatment / group labels (e.g. M_C, O_C, O_V...).
+    rejuvenation_col : str
+        Column with rejuvenation score in "delta years"
+        (negative = biologically younger than chronological).
+    out_path : Path
+        Where to save the PNG.
+    tissue_col : str, optional
+        If provided, can be used in the future for faceting or coloring.
+    """
+
+    df = meta[[group_col, rejuvenation_col]].dropna().copy()
+    if df.empty:
+        logger.warning("plot_rejuvenation_by_group: no data after dropping NaNs.")
+        return
+
+    groups = sorted(df[group_col].unique())
+    data_per_group = [df.loc[df[group_col] == g, rejuvenation_col].values for g in groups]
+
+    plt.figure(figsize=(10, 6))
+    ax = plt.gca()
+
+    # Boxplots
+    ax.boxplot(
+        data_per_group,
+        labels=groups,
+        showfliers=True,
+    )
+
+    # Jitter of individual points
+    for i, g in enumerate(groups, start=1):
+        y = df.loc[df[group_col] == g, rejuvenation_col].values
+        x = np.random.normal(loc=i, scale=0.08, size=len(y))
+        ax.scatter(x, y, alpha=0.4)
+
+    ax.set_xlabel("group")
+    ax.set_ylabel("Rejuvenation score (Δ years; negative = younger)")
+
+    # Horizontal line on 0 as the basal level with no changes
+    ax.axhline(0.0, linestyle="--", linewidth=1)
+
+    ax.set_title("Rejuvenation score by group")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
