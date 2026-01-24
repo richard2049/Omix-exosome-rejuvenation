@@ -11,5 +11,8 @@ dependencies:
   - seaborn
   - scanpy
   - pip
+  - scikit-learn
+  - statsmodels
+  - typing
   - pip:
       - anndata

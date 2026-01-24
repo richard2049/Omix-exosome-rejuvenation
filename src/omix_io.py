@@ -241,6 +241,7 @@ def _read_one_matrix_file(
         raise ValueError(f"Empty header in matrix file: {file_path}")
 
     usecols = None
+    
     if allowed_samples is not None:
         allowed = set(map(str, allowed_samples))
         kept = [first_col] + [c for c in header[1:] if c in allowed]
@@ -265,7 +266,6 @@ def _read_one_matrix_file(
             sep=sep,
             index_col=index_col,
             usecols=usecols,
-            dtype=dtype,
             engine="c",
         )
     except Exception as e:
@@ -275,13 +275,16 @@ def _read_one_matrix_file(
             sep=sep,
             index_col=index_col,
             usecols=usecols,
-            dtype=dtype,
             engine="python",
             on_bad_lines="warn",
         )
 
     df.index = df.index.astype(str)
     df.columns = df.columns.astype(str)
+
+    if dtype is not None:
+        numeric_cols = df.columns
+        df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="raise").astype(dtype)
 
     if df.shape[1] > MAX_OUTPUT_COLS:
         raise ValueError(
