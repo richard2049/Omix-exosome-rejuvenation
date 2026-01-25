@@ -5,12 +5,26 @@ run_pipeline.py
 
 End-to-end exploratory pipeline for the SRSC project:
 - loads primate bulk RNA-seq (OMIX007580),
-- builds a lightweight transcriptomic clock and a proxy rejuvenation score,
+- builds and *cross-validates* a lightweight transcriptomic clock,
+- derives a proxy rejuvenation score,
 - estimates tissue-level exosome-like effects,
 - processes plasma proteomics (OMIX007581) to build a plasma state score,
 - optionally loads Mammal40 methylation (OMIX007582) in an exploratory fashion.
 
-Status: exploratory / work in progress (v0.1).
+Status: exploratory / work in progress (v0.1 -> v0.2-dev).
+"""
+
+"""
+SRSC v0.1 – Phase 1
+
+Implements:
+  - Primate bulk transcriptomic clock (using OMIX007580_01_example.*)
+  - Plasma proteomics PCA scores (using OMIX007581-01_example.*)
+  - Safe OMIX I/O guardrails (see omix_io.py)
+  - Methylation block (OMIX007582) with clear sample-matching limitations
+
+This phase is primarily intended to run on the small example datasets included
+in data/processed for laptop-scale exploration.
 """
 
 import argparse
@@ -22,9 +36,11 @@ from pathlib import Path
 from typing import Tuple, Optional, Any, Dict, List
 
 import pandas as pd
+from sklearn.model_selection import KFold
 
 from .config import PipelineConfig, OmixPaths
 from .logging_utils import get_logger
+import numpy as np
 
 from .omix_io import (
     load_omix_matrix,
@@ -44,6 +60,7 @@ from .preprocessing import (
 from .clocks import (
     train_transcriptomic_clock,
     predict_biological_age,
+    summarize_clock_performance,
 )
 
 from .exosome_effect import (
@@ -55,8 +72,12 @@ from .exosome_effect import (
 )
 
 from .translation_module import generate_translational_insights
-from .viz import plot_tissue_concordance, plot_plasma_biomarker_ranking
-
+from .viz import (
+    plot_tissue_concordance,
+    plot_plasma_biomarker_ranking,
+    plot_age_scatter,
+    plot_rejuvenation_by_group,
+)
 
 logger = get_logger(__name__)
 
@@ -83,7 +104,11 @@ def runtime_sanity_banner(cfg: PipelineConfig) -> None:
     logger.info("PYTHON: %s", sys.executable)
     logger.info("sys.path[0:3]: %s", sys.path[:3])
     logger.info("omix_io loaded from: %s", omix_path)
-    logger.info("Guardrails: MAX_ALLOWED_SAMPLES=%s, MAX_EXPECTED_SAMPLE_COLS=%s", max_samples, max_expected)
+    logger.info(
+        "Guardrails: MAX_ALLOWED_SAMPLES=%s, MAX_EXPECTED_SAMPLE_COLS=%s",
+        max_samples,
+        max_expected,
+    )
     logger.info("cfg.max_allowed_samples=%s", getattr(cfg, "max_allowed_samples", None))
 
 
@@ -117,6 +142,7 @@ def _get_allowed_samples(meta: pd.DataFrame, sample_col: str, cap: int = 5000) -
 def ensure_numeric_age(meta: pd.DataFrame) -> pd.DataFrame:
     """
     Ensure canonical meta['age'] is numeric.
+
     Prefers 'agenumb' (OMIX007580 pattern), otherwise picks the most numeric-like column.
     Preserves original categorical age label in 'age_label'.
     """
@@ -133,8 +159,16 @@ def ensure_numeric_age(meta: pd.DataFrame) -> pd.DataFrame:
 
     # 2) Fallback: find a numeric-like age column
     candidates = [
-        "age_num", "age_years", "Age", "Age (years)", "Age(Y)", "Age (Y)",
-        "chrono_age", "chronological_age", "donor_age", "subject_age"
+        "age_num",
+        "age_years",
+        "Age",
+        "Age (years)",
+        "Age(Y)",
+        "Age (Y)",
+        "chrono_age",
+        "chronological_age",
+        "donor_age",
+        "subject_age",
     ]
     existing = [c for c in candidates if c in meta.columns]
 
@@ -236,7 +270,7 @@ def build_plasma_metadata_from_columns(sample_cols: list[str]) -> pd.DataFrame:
             {
                 "sample_id": s,
                 "sex": "F" if sex == "F" else ("M" if sex == "M" else pd.NA),
-                "group": group_code,   # Y, V, WT, GES, etc.
+                "group": group_code,  # Y, V, WT, GES, etc.
                 "replicate": rep,
                 "omics": "plasma_proteomics",
             }
@@ -319,7 +353,7 @@ def build_methylation_name_mapping(
         meta[c] = meta[c].astype(str).fillna("")
 
     mapping: Dict[str, str] = {}
-    unmapped = []
+    unmapped: List[str] = []
 
     for col in matrix_cols:
         col_str = str(col)
@@ -329,34 +363,26 @@ def build_methylation_name_mapping(
             vals = meta[c].values
 
             # 1) exact matches
-            exact_idx = (vals == col_str)
+            exact_idx = vals == col_str
             if exact_idx.sum() == 1:
                 v = vals[exact_idx][0]
                 matches.append((c, v, "exact"))
                 continue
 
             # 2) metadata value contained in column name
-            #    e.g. meta has 'FV1-Heart', matrix col is 'FV1-Heart_R01C01'
-            contained_idx = [
-                i for i, v in enumerate(vals)
-                if v and v in col_str
-            ]
+            contained_idx = [i for i, v in enumerate(vals) if v and v in col_str]
             if len(contained_idx) == 1:
                 v = vals[contained_idx[0]]
                 matches.append((c, v, "meta_in_col"))
                 continue
 
             # 3) column name contained in metadata value (less likely)
-            contains_idx = [
-                i for i, v in enumerate(vals)
-                if v and col_str in v
-            ]
+            contains_idx = [i for i, v in enumerate(vals) if v and col_str in v]
             if len(contains_idx) == 1:
                 v = vals[contains_idx[0]]
                 matches.append((c, v, "col_in_meta"))
                 continue
 
-        # Decide if we accept the mapping
         if not matches:
             unmapped.append(col_str)
             continue
@@ -383,10 +409,7 @@ def build_methylation_name_mapping(
     )
 
     if unmapped:
-        logger.debug(
-            "Unmapped methylation columns (first 20): %s",
-            unmapped[:20],
-        )
+        logger.debug("Unmapped methylation columns (first 20): %s", unmapped[:20])
 
     return mapping
 
@@ -477,7 +500,7 @@ def load_align_standardize(
     meta = meta.loc[:, ~meta.columns.duplicated()].copy()
 
     # ---- Early feature reduction (safe if your filter is defensive) ----
-    if cfg.n_top_features_expr and cfg.n_top_features_expr > 0:
+    if getattr(cfg, "n_top_features_expr", None) and cfg.n_top_features_expr > 0:
         logger.info("Matrix shape before variance filter: %s", matrix.shape)
         matrix = filter_top_variance(matrix, cfg.n_top_features_expr)
 
@@ -591,6 +614,119 @@ def load_methylation_block(cfg: PipelineConfig) -> Tuple[Optional[pd.DataFrame],
 
 
 # -----------------------------------------------------------------------------
+# Cross-validated clock evaluation
+# -----------------------------------------------------------------------------
+# def cross_validate_clock(
+#     expr_log: pd.DataFrame,
+#     meta: pd.DataFrame,
+#     cfg: PipelineConfig,
+#     age_col: str = "age",
+# ) -> Tuple[pd.DataFrame, Optional[Dict[str, float]]]:
+    """
+    Compute out-of-fold (cross-validated) age predictions and summarize performance.
+
+    Returns
+    -------
+    meta_out : DataFrame
+        Metadata with an extra 'predicted_age_cv' column (may contain NaNs if
+        something failed for some samples).
+    metrics : dict or None
+        Summary metrics from summarize_clock_performance, or None if CV failed.
+
+    Notes
+    -----
+    - Uses the same train_transcriptomic_clock / predict_biological_age functions
+      that are used for the final model, but inside K-fold splits.
+    - This gives a scientifically more honest estimate of generalization than
+      in-sample R^2 / MAE on the training data.
+    """
+    meta = meta.copy()
+
+    if age_col not in meta.columns:
+        raise ValueError(f"Age column '{age_col}' not found in metadata.")
+
+    if "sample_id" not in meta.columns:
+        raise ValueError("Metadata must contain 'sample_id' before CV.")
+
+    n_samples = meta.shape[0]
+    if n_samples < 4:
+        logger.warning("Too few samples (%d) for cross-validation; skipping.", n_samples)
+        return meta, None
+
+    # Decide number of folds
+    default_folds = getattr(cfg, "clock_cv_folds", 5) or 5
+    n_splits = min(default_folds, n_samples)
+    if n_splits < 2:
+        logger.warning("Cannot run CV with <2 folds; skipping.")
+        return meta, None
+
+    random_state = getattr(cfg, "random_state", getattr(cfg, "random_seed", 42))
+
+    logger.info("Running %d-fold cross-validation for the transcriptomic clock.", n_splits)
+
+    sample_ids = meta["sample_id"].tolist()
+    cv_pred = pd.Series(index=sample_ids, dtype="float64")
+
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+    for fold, (train_idx, test_idx) in enumerate(kf.split(sample_ids), start=1):
+        train_ids = [sample_ids[i] for i in train_idx]
+        test_ids = [sample_ids[i] for i in test_idx]
+
+        expr_train = expr_log.loc[:, train_ids]
+        expr_test = expr_log.loc[:, test_ids]
+
+        meta_train = meta.iloc[train_idx].reset_index(drop=True)
+        meta_test = meta.iloc[test_idx].reset_index(drop=True)
+
+        clock_result = train_transcriptomic_clock(  # <-- CHANGED
+            expr_train,
+            meta_train,
+            age_col=age_col,
+            model=getattr(cfg, "clock_model", None),
+            n_top_features=getattr(cfg, "n_top_features_clock", 3000),
+        )
+
+        if isinstance(clock_result, tuple):        # <-- CHANGED
+            clock_fold, clock_aux = clock_result
+        else:
+            clock_fold, clock_aux = clock_result, None
+
+        pred_fold = predict_biological_age(
+            clock_fold,
+            expr_test,
+            meta_test,
+        )
+        pred_df = _normalize_pred_output(pred_fold)
+
+        pred_df = pred_df.set_index("sample_id")
+        for sid, val in pred_df["predicted_age"].items():
+            if sid in cv_pred.index:
+                cv_pred.loc[sid] = float(val)
+
+        logger.info(
+            "CV fold %d/%d: got %d predictions.",
+            fold,
+            n_splits,
+            pred_df.shape[0],
+        )
+
+    meta["predicted_age_cv"] = meta["sample_id"].map(cv_pred)
+
+    try:
+        metrics = summarize_clock_performance(
+            meta,
+            chrono_col=age_col,
+            pred_col="predicted_age_cv",
+        )
+    except Exception as e:
+        logger.warning("summarize_clock_performance failed on CV predictions: %s", e)
+        metrics = None
+
+    return meta, metrics
+
+
+# -----------------------------------------------------------------------------
 # Pipeline core
 # -----------------------------------------------------------------------------
 def run(cfg: PipelineConfig) -> None:
@@ -600,18 +736,15 @@ def run(cfg: PipelineConfig) -> None:
     runtime_sanity_banner(cfg)
     logger.info("Pipeline config: %s", asdict(cfg))
 
-    # ---- Primate bulk (tissues) ----
+  # Primate bulk transcriptomic clock (Phase 1)
     prim_expr, prim_meta = load_align_standardize(cfg.primate_bulk, cfg, assume_counts=True)
 
-    # ---- Optional: primate methylation (Mammal40) ----
+    # Plasma proteomics PCA-based scores (Phase 1)
     prim_meth_expr, prim_meth_meta = load_methylation_block(cfg)
     if prim_meth_expr is None:
         logger.info("Methylation data not available or not usable; skipping methylation-derived analyses for v0.1.")
     else:
-        logger.info(
-            "Methylation block loaded (CpGs x samples): %s",
-            prim_meth_expr.shape,
-        )
+        logger.info("Methylation block loaded (CpGs x samples): %s", prim_meth_expr.shape)
 
     # ---- Age handling and transcriptomic clock ----
     prim_meta = ensure_numeric_age(prim_meta)
@@ -627,71 +760,123 @@ def run(cfg: PipelineConfig) -> None:
 
     logger.info(
         "Age validity rate: %.3f",
-        pd.to_numeric(prim_meta["age"], errors="coerce").notna().mean()
+        pd.to_numeric(prim_meta["age"], errors="coerce").notna().mean(),
     )
 
-    # Train a lightweight transcriptomic clock
-    prim_clock = train_transcriptomic_clock(
-        prim_expr,
-        prim_meta,
-        age_col="age",
-        model=getattr(cfg, "clock_model", None),
-        n_top_features=getattr(cfg, "n_top_features_clock", 3000),
+    # 1) Train a final transcriptomic clock on all samples
+    prim_clock, prim_cv_pred_df, clock_metrics = train_transcriptomic_clock(
+            prim_expr,
+            prim_meta,
+            age_col="age",
+            model=getattr(cfg, "clock_model", None),
+            n_top_features=getattr(cfg, "n_top_features_clock", 3000),
+            n_splits=getattr(cfg, "clock_cv_folds", 5),
+            random_state=getattr(cfg, "random_state", getattr(cfg, "random_seed", 42)),
     )
 
-    prim_pred = predict_biological_age(
-        prim_clock,
-        prim_expr,
-        prim_meta,
-    )
+    logger.info("Transcriptomic clock metrics (train CV): %s", clock_metrics)
 
-    # Attach predicted age to metadata (robust)
-    prim_pred_df = _normalize_pred_output(prim_pred)
+    # (optional) log / save metrics
+    clock_metrics_path = cfg.results_dir / "clock_metrics_primates.csv"
+    pd.DataFrame([clock_metrics]).to_csv(clock_metrics_path, index=False)
 
-    if "sample_id" not in prim_pred_df.columns or "predicted_age" not in prim_pred_df.columns:
-        raise ValueError("Prediction output must contain 'sample_id' and 'predicted_age'.")
-
+    # In-sample predictions from the final model (can be useful later, but are
+    # NOT used for performance metrics to avoid optimistic bias).
+    prim_cv_pred_df = prim_cv_pred_df.rename(columns={"predicted_age": "predicted_age_cv"})
     prim_meta = prim_meta.merge(
-        prim_pred_df[["sample_id", "predicted_age"]],
+        prim_cv_pred_df[["sample_id", "predicted_age_cv"]],
         on="sample_id",
         how="left",
     )
 
-    # Proxy rejuvenation score at sample-level
+    # 2) Cross-validated predictions + honest performance metrics
+    prim_pred_full = predict_biological_age(
+        prim_clock,
+        prim_expr,
+        prim_meta,
+    )
+    prim_meta = prim_meta.merge(
+        prim_pred_full[["sample_id", "predicted_age"]],
+        on="sample_id",
+        how="left",
+    )
+
+    try:
+        plot_age_scatter(
+            prim_meta,
+            chrono_col="age",
+            pred_col="predicted_age_cv",
+            out_path=cfg.figures_dir / "primates_age_scatter.png",
+        )
+    except Exception as e:
+        logger.warning("plot_age_scatter failed: %s", e)
+
+    # --- 3) Rejuvenation score using CV predictions ---
     prim_meta = build_proxy_rejuvenation_score(
         prim_meta,
-        pred_age_col="predicted_age",
+        pred_age_col="predicted_age_cv",
         chrono_age_col="age",
         out_col="rejuvenation_score",
     )
 
-    # Tissue-level effect sizes
+    # Rejuvenation score distribution by group
+    try:
+        if "group" in prim_meta.columns:
+            plot_rejuvenation_by_group(
+                prim_meta,
+                group_col="group",
+                rejuvenation_col="rejuvenation_score",
+                out_path=cfg.figures_dir / "primates_rejuvenation_by_group.png",
+                tissue_col="tissue" if "tissue" in prim_meta.columns else None,
+            )
+    except Exception as e:
+        logger.warning("plot_rejuvenation_by_group failed: %s", e)
+
+    # Use cross-validated predictions for rejuvenation score if available,
+    # otherwise fall back to in-sample predictions.
+    pred_col_for_rejuvenation = "predicted_age_cv" if "predicted_age_cv" in prim_meta.columns else "predicted_age"
+
+    prim_meta = build_proxy_rejuvenation_score(
+        prim_meta,
+        pred_age_col=pred_col_for_rejuvenation,
+        chrono_age_col="age",
+        out_col="rejuvenation_score",
+    )
+
+    # Plot rejuvenation score distribution by group (exploratory)
+    try:
+        if "group" in prim_meta.columns:
+            plot_rejuvenation_by_group(
+                prim_meta,
+                group_col="group",
+                rejuvenation_col="rejuvenation_score",
+                out_path=cfg.figures_dir / "primates_rejuvenation_by_group.png",
+                tissue_col="tissue" if "tissue" in prim_meta.columns else None,
+            )
+    except Exception as e:
+        logger.warning("plot_rejuvenation_by_group failed: %s", e)
+
+    # ---- Tissue-level effect sizes ----
     prim_tissue_effects = call_with_supported_kwargs(
         compute_group_effect_by_tissue,
-
         # Provide multiple possible parameter names for the expression matrix
         expr=prim_expr,
         matrix=prim_expr,
         data=prim_expr,
         X=prim_expr,
-
         # Provide multiple possible parameter names for metadata
         meta=prim_meta,
         metadata=prim_meta,
         meta_df=prim_meta,
-
         # Outcome column name your exosome module likely expects
         outcome_col="rejuvenation_score",
         y_col="rejuvenation_score",
-
         # Group/treatment fields
         group_col="group",
         treated_label=cfg.primate_treated_label,
         control_label=getattr(cfg, "control_label", None),
         control_labels=getattr(cfg, "primate_control_labels", None) or [cfg.control_label],
-
         tissue_col="tissue",
-
         # Top genes parameter name variants
         top_k=cfg.top_genes_per_tissue,
         top_n=cfg.top_genes_per_tissue,
@@ -711,6 +896,8 @@ def run(cfg: PipelineConfig) -> None:
 
     prim_plasma_expr = load_plasma_proteomics_csv(plasma_file)
     prim_plasma_meta = build_plasma_metadata_from_columns(list(prim_plasma_expr.columns))
+    print("DEBUG raw plasma shape:", prim_plasma_expr.shape)
+    print(prim_plasma_expr.head())
     prim_plasma_expr = clean_plasma_matrix(
         prim_plasma_expr,
         min_feature_non_nan_frac=0.5,
@@ -718,14 +905,17 @@ def run(cfg: PipelineConfig) -> None:
     )
 
     logger.info("Plasma matrix shape: %s", prim_plasma_expr.shape)
-    logger.info("Plasma groups: %s", prim_plasma_meta.get("group", pd.Series(dtype=str)).value_counts().to_dict())
+    logger.info(
+        "Plasma groups: %s",
+        prim_plasma_meta.get("group", pd.Series(dtype=str)).value_counts().to_dict(),
+    )
 
     prim_plasma_state = call_with_supported_kwargs(
         build_plasma_state_score,
-        plasma_matrix=prim_plasma_expr,   # <-- CLAVE
-        plasma_meta=prim_plasma_meta,     # por si la firma lo usa
-        meta=prim_plasma_meta,            # alias
-        metadata=prim_plasma_meta,        # alias
+        plasma_matrix=prim_plasma_expr,  # main argument
+        plasma_meta=prim_plasma_meta,  # in case the signature uses it
+        meta=prim_plasma_meta,  # alias
+        metadata=prim_plasma_meta,  # alias
         group_col="group",
         treated_label=cfg.primate_treated_label,
         control_label=getattr(cfg, "control_label", None),
@@ -736,8 +926,8 @@ def run(cfg: PipelineConfig) -> None:
     # ---- Cross-pattern comparison (bulk vs plasma) ----
     pattern_comparison = call_with_supported_kwargs(
         compare_effect_patterns,
-        prim_tissue_effects,   # effect_a
-        prim_plasma_state,     # effect_b
+        prim_tissue_effects,  # effect_a
+        prim_plasma_state,  # effect_b
         tissue_weighting=getattr(cfg, "tissue_weighting", None),
         weighting=getattr(cfg, "tissue_weighting", None),
     )
@@ -747,8 +937,8 @@ def run(cfg: PipelineConfig) -> None:
     # Estimate exosome-attributable fraction using bulk/tissue vs plasma proxy
     exo_fraction = call_with_supported_kwargs(
         estimate_exosome_fraction,
-        prim_tissue_effects,   # -> effect_cells (positional)
-        prim_plasma_state,     # -> effect_exosomes (positional)
+        prim_tissue_effects,  # -> effect_cells (positional)
+        prim_plasma_state,  # -> effect_exosomes (positional)
         method=getattr(cfg, "exosome_fraction_method", None),
         strategy=getattr(cfg, "exosome_fraction_method", None),
     )
@@ -782,7 +972,7 @@ def run(cfg: PipelineConfig) -> None:
 
     # ------------------------- Translational insights -------------------------
     prim_outcomes = prim_meta.copy()
-    for col in ("sample_id", "group", "tissue", "rejuvenation_score", "predicted_age"):
+    for col in ("sample_id", "group", "tissue", "rejuvenation_score", "predicted_age_cv", "predicted_age"):
         if col not in prim_outcomes.columns:
             prim_outcomes[col] = pd.NA
 
@@ -800,7 +990,7 @@ def run(cfg: PipelineConfig) -> None:
                     return n
             return None
 
-        kw = {}
+        kw: Dict[str, Any] = {}
 
         # --- Map core concepts to whichever names your module actually uses ---
         n_cells = pick("effect_cells", "prim_tissue_effects", "tissue_effects", "bulk_effects", "effect_a")
@@ -855,12 +1045,13 @@ def run(cfg: PipelineConfig) -> None:
             kw["prim_meta"] = prim_meta
 
         required_names = [
-            name for name, p in params.items()
+            name
+            for name, p in params.items()
             if p.default is inspect._empty
             and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
         ]
 
-        args = []
+        args: List[Any] = []
         for name in required_names:
             if name not in kw:
                 raise TypeError(f"Missing required arg for translation module: {name}")
@@ -886,10 +1077,10 @@ def run(cfg: PipelineConfig) -> None:
 
     # ---- Tissue concordance plot (primate vs mouse) ----
     try:
-        if "mouse_tissue_effects" in locals() and mouse_tissue_effects is not None:
+        if "mouse_tissue_effects" in locals() and mouse_tissue_effects is not None:  # type: ignore[name-defined]
             plot_tissue_concordance(
                 prim_tissue_effects,
-                mouse_tissue_effects,
+                mouse_tissue_effects,  # type: ignore[name-defined]
                 str(cfg.figures_dir / "tissue_concordance.png"),
             )
         else:
@@ -920,20 +1111,20 @@ def _build_default_config(base_dir: Path) -> PipelineConfig:
     Centralized defaults.
     Adjust filenames to your real downloaded names.
     """
-    data = base_dir / "data"
+    data = base_dir / "data/PROCESSED"
 
     return PipelineConfig(
         primate_bulk=OmixPaths(
-            matrix=data / "OMIX007580-01.txt",
-            metadata=data / "OMIX007580-02.csv",
+            matrix=data / "OMIX007580_01_example.txt",
+            metadata=data / "OMIX007580-02_example.csv",
         ),
         primate_plasma=OmixPaths(
-            matrix=data / "OMIX007581-01.csv",
+            matrix=data / "OMIX007581-01_example.csv",
             metadata=data / "OMIX007581_metadata.xlsx",
         ),
         primate_methylation=OmixPaths(
-            matrix=data / "OMIX007582_beta_matrix.csv",  # technical IDs by default
-            metadata=data / "OMIX007582-02.csv",
+            matrix=data / "OMIX007582_beta_matrix_example.csv",  # technical IDs by default
+            metadata=data / "OMIX007582-02_example.csv",
         ),
         mouse_exosome_bulk=OmixPaths(
             matrix=data / "OMIX009283-01.txt",

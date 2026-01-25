@@ -13,6 +13,13 @@ __pycache__/
 
 # Data (no version large raw datasets)
 data/raw/
+data/RAW/
+data/raw/
+results/
+figures/
+*.idat
+*.rds
+*.log
 data/*.zip
 data/*.idat
 data/*_beta_matrix.csv
