@@ -1,10 +1,10 @@
-# -----------------------------------------------------------------------------
+"""
 # omix_io.py
 
 # I/O helpers for OMIX datasets: safe loading of matrices and metadata,
 # plus simple guardrails on shapes and sample IDs.
 # -----------------------------------------------------------------------------
-
+"""
 from __future__ import annotations
 
 from pathlib import Path

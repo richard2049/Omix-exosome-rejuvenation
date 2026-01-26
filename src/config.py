@@ -41,7 +41,8 @@ class PipelineConfig:
     primate_methylation: Optional[OmixPaths] = None
     mouse_exosome_bulk: Optional[OmixPaths] = None
     max_allowed_samples: int = 5000
-    min_samples_for_mediation: int = 12
+    min_samples_for_mediation: int = 6
+    min_samples_per_group_for_rejuv: int = 2
     mediation_bootstrap: int = 500
     clock_model: str = "ridge"  # or whatever you implemented
     control_label: str = "Control"
@@ -63,8 +64,8 @@ class PipelineConfig:
     animal_id_col_candidates: Optional[List[str]] = None
 
     # Labels
-    primate_treated_label: str = "SRC"  # change to "hMPC" if needed
-    primate_control_labels: Optional[List[str]] = None
+    primate_treated_label = "O_GES"
+    primate_control_labels= ["Y_C", "M_C", "O_C", "O_WT", "O_V"]
 
     mouse_treated_label: str = "Exosome"  # adjust to your metadata
     mouse_control_labels: Optional[List[str]] = None
@@ -118,7 +119,7 @@ class PipelineConfig:
         ]
 
         self.primate_control_labels = self.primate_control_labels or [
-            "WTC", "Saline", "Control"
+            "Y_C", "M_C", "O_C", "O_WT", "O_V"
         ]
         self.mouse_control_labels = self.mouse_control_labels or [
             "Saline", "Control", "WTC"
