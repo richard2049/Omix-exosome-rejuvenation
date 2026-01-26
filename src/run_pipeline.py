@@ -14,19 +14,6 @@ End-to-end exploratory pipeline for the SRSC project:
 Status: exploratory / work in progress (v0.1 -> v0.2-dev).
 """
 
-"""
-SRSC v0.1 – Phase 1
-
-Implements:
-  - Primate bulk transcriptomic clock (using OMIX007580_01_example.*)
-  - Plasma proteomics PCA scores (using OMIX007581-01_example.*)
-  - Safe OMIX I/O guardrails (see omix_io.py)
-  - Methylation block (OMIX007582) with clear sample-matching limitations
-
-This phase is primarily intended to run on the small example datasets included
-in data/processed for laptop-scale exploration.
-"""
-
 import argparse
 import sys
 import inspect
@@ -40,7 +27,6 @@ from sklearn.model_selection import KFold
 
 from .config import PipelineConfig, OmixPaths
 from .logging_utils import get_logger
-import numpy as np
 
 from .omix_io import (
     load_omix_matrix,
@@ -77,6 +63,13 @@ from .viz import (
     plot_plasma_biomarker_ranking,
     plot_age_scatter,
     plot_rejuvenation_by_group,
+)
+
+from .rejuvenation import (
+    compute_delta_age,
+    summarize_rejuvenation_by_tissue,
+    summarise_global_rejuvenation,
+    summarize_tissue_expression_effects
 )
 
 logger = get_logger(__name__)
@@ -736,15 +729,29 @@ def run(cfg: PipelineConfig) -> None:
     runtime_sanity_banner(cfg)
     logger.info("Pipeline config: %s", asdict(cfg))
 
-  # Primate bulk transcriptomic clock (Phase 1)
+    # ---- Primate bulk (tissues) ----
     prim_expr, prim_meta = load_align_standardize(cfg.primate_bulk, cfg, assume_counts=True)
 
-    # Plasma proteomics PCA-based scores (Phase 1)
+    # ---- Optional: primate methylation (Mammal40) ----
     prim_meth_expr, prim_meth_meta = load_methylation_block(cfg)
     if prim_meth_expr is None:
         logger.info("Methylation data not available or not usable; skipping methylation-derived analyses for v0.1.")
     else:
         logger.info("Methylation block loaded (CpGs x samples): %s", prim_meth_expr.shape)
+
+    tissue_expr_effects = summarize_tissue_expression_effects(
+        prim_expr,
+        prim_meta,
+        tissue_col=cfg.tissue_col_candidates[0],
+        group_col=cfg.group_col_candidates[0],
+        control_labels=cfg.primate_control_labels,
+        treated_labels=[cfg.primate_treated_label],
+        min_per_group=max(3, cfg.min_samples_for_mediation // 2),
+)
+
+    tissue_expr_path = cfg.results_dir / "tissue_expression_effects.csv"
+    tissue_expr_effects.to_csv(tissue_expr_path, index=False)
+    logger.info("Saved tissue expression effects to: %s", tissue_expr_path)
 
     # ---- Age handling and transcriptomic clock ----
     prim_meta = ensure_numeric_age(prim_meta)
@@ -855,6 +862,48 @@ def run(cfg: PipelineConfig) -> None:
             )
     except Exception as e:
         logger.warning("plot_rejuvenation_by_group failed: %s", e)
+    
+    prim_meta = compute_delta_age(
+    prim_meta,
+    pred_age_col="predicted_age",
+    chrono_age_col="age",
+    out_col="delta_age",
+    )
+
+    # Global summary
+    global_rejuv = summarise_global_rejuvenation(
+        prim_meta,
+        group_col=cfg.group_col_candidates[0],  # p.ej. 'group'
+        value_col="delta_age",
+        control_labels=cfg.primate_control_labels,
+        treated_labels=[cfg.primate_treated_label],
+        min_per_group= getattr(cfg, "min_samples_per_group_for_rejuv", 4),
+        # min_per_group= 4,
+        n_bootstrap=cfg.n_bootstrap,
+        random_state=cfg.random_state,
+    )
+    
+    logger.info("Global rejuvenation summary: %s", global_rejuv)
+
+
+    # Summary by tissue
+    tissue_col = cfg.tissue_col_candidates[0]  # p.ej. 'tissue'
+    rejuv_by_tissue = summarize_rejuvenation_by_tissue(
+        prim_meta,
+        tissue_col=tissue_col,
+        group_col=cfg.group_col_candidates[0],
+        value_col="delta_age",
+        control_labels=cfg.primate_control_labels,
+        treated_labels=[cfg.primate_treated_label],
+        min_per_group= getattr(cfg, "min_samples_per_group_for_rejuv", 4),
+        # min_per_group = cfg.min_samples_for_mediation,
+        n_bootstrap=cfg.n_bootstrap,
+        random_state=cfg.random_state,
+    )
+
+    rejuv_by_tissue_path = cfg.results_dir / "rejuvenation_by_tissue.csv"
+    rejuv_by_tissue.to_csv(rejuv_by_tissue_path, index=False)
+    logger.info("Saved tissue-level rejuvenation summary to: %s", rejuv_by_tissue_path)
 
     # ---- Tissue-level effect sizes ----
     prim_tissue_effects = call_with_supported_kwargs(
@@ -896,8 +945,6 @@ def run(cfg: PipelineConfig) -> None:
 
     prim_plasma_expr = load_plasma_proteomics_csv(plasma_file)
     prim_plasma_meta = build_plasma_metadata_from_columns(list(prim_plasma_expr.columns))
-    print("DEBUG raw plasma shape:", prim_plasma_expr.shape)
-    print(prim_plasma_expr.head())
     prim_plasma_expr = clean_plasma_matrix(
         prim_plasma_expr,
         min_feature_non_nan_frac=0.5,

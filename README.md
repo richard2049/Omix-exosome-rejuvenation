@@ -203,3 +203,18 @@ Despite the limitations, this repository documents the end-to-end process of:
   - Introduced small, consistent OMIX example files.
   - Hardened OMIX I/O (metadata + matrix guardrails).
   - Documented Mammal40 sample-matching limitations.
+
+- v0.1 Phase 2 - Robust rejuvenation score & tissue signals
+
+Phase 2 extends the example pipeline with:
+
+- A robust definition of `delta_age = predicted_age – chronological_age`.
+- Global and tissue-level rejuvenation summaries with bootstrap confidence intervals.
+- Simple tissue-level expression effects (treated vs control) based on bulk RNA-seq.
+- Robust plotting utilities for rejuvenation by group (with sensible fallbacks when sample sizes are small).
+
+New outputs are written under `results/`:
+
+- `rejuvenation_by_tissue.csv`
+- `tissue_expression_effects.csv`
+- `figures/rejuvenation_by_group_boxplot.png` (example run)
