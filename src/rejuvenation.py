@@ -22,6 +22,10 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy import stats
+from .logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def compute_delta_age(
@@ -176,47 +180,217 @@ def summarize_tissue_expression_effects(
     meta: pd.DataFrame,
     tissue_col: str,
     group_col: str,
-    control_labels: List[str],
-    treated_labels: List[str],
-    min_per_group: int = 4,
+    control_labels: Sequence[str],
+    treated_labels: Sequence[str],
+    min_per_group: int = 2,
 ) -> pd.DataFrame:
     """
-    Expression-based tissue signal.
+    Summarize tissue-wise expression effects using group labels.
 
-    For each tissue, compute a simple concordance measure:
-    mean treated-vs-control effect across genes and overall sign.
-    Lightweight Phase 2 version; GSEA and richer analyses are not yet included.
+    For each tissue, compare the mean expression profile between
+    control and treated samples and return:
+
+      - tissue
+      - n_ctrl
+      - n_trt
+      - top_genes   (comma-separated string of top-effect genes)
+      - mean_effect (mean (treated - control) across all genes)
+      - median_effect
+
+    Parameters
+    ----------
+    expr : DataFrame
+        Gene expression matrix (genes x samples).
+    meta : DataFrame
+        Sample metadata. Must contain tissue_col, group_col and sample_id.
+    tissue_col : str
+        Column name for tissue/organ.
+    group_col : str
+        Column name for experimental group (e.g. Y_C, O_C, O_GES...).
+    control_labels : list-like
+        Labels considered as control.
+    treated_labels : list-like
+        Labels considered as treated.
+    min_per_group : int
+        Minimum number of samples per group within a tissue to compute effects.
+
+    Returns
+    -------
+    DataFrame
+        One row per tissue with effect size summary.
     """
-    if tissue_col not in meta.columns or group_col not in meta.columns:
-        raise ValueError("Missing tissue or group columns in metadata.")
 
-    # Aseguramos misma ordenación de columnas que en meta
-    expr = expr.loc[:, meta["sample_id"].values]
+    required_cols = {tissue_col, group_col, "sample_id"}
+    missing = required_cols - set(meta.columns)
+    if missing:
+        logger.warning(
+            "summarize_tissue_expression_effects: missing required "
+            "metadata columns: %s. Returning empty DataFrame.",
+            ", ".join(sorted(missing)),
+        )
+        return pd.DataFrame(
+            columns=["tissue", "n_ctrl", "n_trt", "top_genes", "mean_effect", "median_effect"]
+        )
+
+    # Drop rows without tissue / group
+    meta = meta.copy()
+    meta = meta.loc[meta[tissue_col].notna() & meta[group_col].notna()]
+    if meta.empty:
+        logger.warning("summarize_tissue_expression_effects: no rows with both tissue and group. Returning empty.")
+        return pd.DataFrame(
+            columns=["tissue", "n_ctrl", "n_trt", "top_genes", "mean_effect", "median_effect"]
+        )
+
+    # Keep only control + treated labels
+    valid_labels = list(control_labels) + list(treated_labels)
+    meta = meta.loc[meta[group_col].isin(valid_labels)]
+    if meta.empty:
+        logger.warning(
+            "summarize_tissue_expression_effects: no rows with group in %s. Returning empty.",
+            valid_labels,
+        )
+        return pd.DataFrame(
+            columns=["tissue", "n_ctrl", "n_trt", "top_genes", "mean_effect", "median_effect"]
+        )
+
+    # Use sample_id as index to align with expr columns
+    meta["sample_id"] = meta["sample_id"].astype(str)
+    meta = meta.set_index("sample_id")
+
+    # Align expression columns to metadata
+    common_ids = expr.columns.intersection(meta.index)
+    if len(common_ids) < (2 * min_per_group):
+        logger.warning(
+            "summarize_tissue_expression_effects: only %d common samples between expr and meta. Returning empty.",
+            len(common_ids),
+        )
+        return pd.DataFrame(
+            columns=["tissue", "n_ctrl", "n_trt", "top_genes", "mean_effect", "median_effect"]
+        )
+
+    expr = expr.loc[:, common_ids]
+    meta = meta.loc[common_ids]
 
     rows = []
     for tissue, sub_meta in meta.groupby(tissue_col):
+        # Boolean masks in this tissue
         is_ctrl = sub_meta[group_col].isin(control_labels)
         is_trt = sub_meta[group_col].isin(treated_labels)
 
-        if is_ctrl.sum() < min_per_group or is_trt.sum() < min_per_group:
+        n_ctrl = int(is_ctrl.sum())
+        n_trt = int(is_trt.sum())
+
+        if n_ctrl < min_per_group or n_trt < min_per_group:
             continue
 
-        cols_ctrl = sub_meta.loc[is_ctrl, "sample_id"].values
-        cols_trt = sub_meta.loc[is_trt, "sample_id"].values
+        # Sample IDs in each group (now they are the index)
+        ctrl_cols = sub_meta.index[is_ctrl].tolist()
+        trt_cols = sub_meta.index[is_trt].tolist()
 
-        # medias por grupo
-        mean_ctrl = expr[cols_ctrl].mean(axis=1)
-        mean_trt = expr[cols_trt].mean(axis=1)
-        diff = mean_trt - mean_ctrl  # efecto por gen
+        # Make sure they are all in the expression matrix
+        ctrl_cols = [c for c in ctrl_cols if c in expr.columns]
+        trt_cols = [c for c in trt_cols if c in expr.columns]
+
+        if len(ctrl_cols) < min_per_group or len(trt_cols) < min_per_group:
+            continue
+
+        # Mean expression per gene in each group
+        expr_ctrl = expr.loc[:, ctrl_cols].mean(axis=1)
+        expr_trt = expr.loc[:, trt_cols].mean(axis=1)
+
+        diff = expr_trt - expr_ctrl
+
+        # Top genes by absolute effect
+        top_genes = diff.abs().sort_values(ascending=False).head(20).index.tolist()
+        top_genes_str = ",".join(map(str, top_genes))
 
         rows.append(
             {
                 "tissue": tissue,
-                "n_ctrl": int(is_ctrl.sum()),
-                "n_trt": int(is_trt.sum()),
+                "n_ctrl": len(ctrl_cols),
+                "n_trt": len(trt_cols),
+                "top_genes": top_genes_str,
                 "mean_effect": float(diff.mean()),
                 "median_effect": float(diff.median()),
             }
         )
+
+    if not rows:
+        logger.warning(
+            "summarize_tissue_expression_effects: no tissues passed the filters (min_per_group=%d). "
+            "Returning empty DataFrame.",
+            min_per_group,
+        )
+        return pd.DataFrame(
+            columns=["tissue", "n_ctrl", "n_trt", "top_genes", "mean_effect", "median_effect"]
+        )
+
+    return pd.DataFrame(rows)
+
+def compute_plasma_biomarkers(
+    plasma_expr: pd.DataFrame,
+    plasma_meta: pd.DataFrame,
+    outcome: pd.Series,
+    min_non_nan_frac: float = 0.7,
+) -> pd.DataFrame:
+    """
+    Rank plasma proteins by association with an outcome (e.g. rejuvenation score).
+
+    Parameters
+    ----------
+    plasma_expr : DataFrame
+        Rows = proteins, cols = samples (matching plasma_meta index or sample_id).
+    plasma_meta : DataFrame
+        Must be index-aligned or contain a column to align with plasma_expr columns.
+    outcome : Series
+        Numeric phenotype per sample (e.g. rejuvenation score, state index, etc.).
+        Index MUST be sample IDs matching plasma_expr columns.
+    min_non_nan_frac : float
+        Minimum fraction of non-NaN values per protein to include in the analysis.
+
+    Returns
+    -------
+    DataFrame with columns: protein, spearman_r, pval, qval, abs_r, direction.
+    """
+    # Ensuring alignment
+    common = plasma_expr.columns.intersection(outcome.index)
+    if len(common) < 3:
+        raise ValueError(f"Too few samples with both plasma and outcome: {len(common)}")
+
+    expr = plasma_expr.loc[:, common]
+    y = outcome.loc[common].astype(float)
+
+    # Filtered by missingness
+    non_nan_frac = expr.notna().mean(axis=1)
+    expr = expr.loc[non_nan_frac >= min_non_nan_frac]
+    if expr.empty:
+        raise ValueError("All plasma features dropped due to missingness.")
+
+    records = []
+    for protein, row in expr.iterrows():
+        x = row.values.astype(float)
+        mask = ~np.isnan(x) & ~np.isnan(y.values)
+        if mask.sum() < 3:
+            continue
+        r, p = stats.spearmanr(x[mask], y.values[mask])
+        if np.isnan(r):
+            continue
+        records.append((protein, r, p))
+
+    if not records:
+        return pd.DataFrame(columns=["protein", "spearman_r", "pval", "qval", "abs_r", "direction"])
+
+    df = pd.DataFrame(records, columns=["protein", "spearman_r", "pval"])
+
+    # Simple FDR (Benjamini–Hochberg)
+    df = df.sort_values("pval").reset_index(drop=True)
+    m = len(df)
+    df["qval"] = df["pval"] * m / (df.index + 1)
+    df["qval"] = df["qval"].clip(upper=1.0)
+
+    df["abs_r"] = df["spearman_r"].abs()
+    df["direction"] = np.where(df["spearman_r"] > 0, "pro-aging", "pro-rejuvenation")
+
+    return df
 
     return pd.DataFrame(rows)

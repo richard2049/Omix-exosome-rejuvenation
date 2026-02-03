@@ -69,7 +69,8 @@ from .rejuvenation import (
     compute_delta_age,
     summarize_rejuvenation_by_tissue,
     summarise_global_rejuvenation,
-    summarize_tissue_expression_effects
+    summarize_tissue_expression_effects,
+    compute_plasma_biomarkers
 )
 
 logger = get_logger(__name__)
@@ -731,27 +732,14 @@ def run(cfg: PipelineConfig) -> None:
 
     # ---- Primate bulk (tissues) ----
     prim_expr, prim_meta = load_align_standardize(cfg.primate_bulk, cfg, assume_counts=True)
-
+    # Will hold tissue-level bulk effects used later for exosome comparison
+    prim_tissue_effects = None
     # ---- Optional: primate methylation (Mammal40) ----
     prim_meth_expr, prim_meth_meta = load_methylation_block(cfg)
     if prim_meth_expr is None:
         logger.info("Methylation data not available or not usable; skipping methylation-derived analyses for v0.1.")
     else:
         logger.info("Methylation block loaded (CpGs x samples): %s", prim_meth_expr.shape)
-
-    tissue_expr_effects = summarize_tissue_expression_effects(
-        prim_expr,
-        prim_meta,
-        tissue_col=cfg.tissue_col_candidates[0],
-        group_col=cfg.group_col_candidates[0],
-        control_labels=cfg.primate_control_labels,
-        treated_labels=[cfg.primate_treated_label],
-        min_per_group=max(3, cfg.min_samples_for_mediation // 2),
-)
-
-    tissue_expr_path = cfg.results_dir / "tissue_expression_effects.csv"
-    tissue_expr_effects.to_csv(tissue_expr_path, index=False)
-    logger.info("Saved tissue expression effects to: %s", tissue_expr_path)
 
     # ---- Age handling and transcriptomic clock ----
     prim_meta = ensure_numeric_age(prim_meta)
@@ -818,10 +806,13 @@ def run(cfg: PipelineConfig) -> None:
     except Exception as e:
         logger.warning("plot_age_scatter failed: %s", e)
 
-    # --- 3) Rejuvenation score using CV predictions ---
+   # Use cross-validated predictions for rejuvenation score if available,
+    # otherwise fall back to in-sample predictions.
+    pred_col_for_rejuvenation = "predicted_age_cv" if "predicted_age_cv" in prim_meta.columns else "predicted_age"
+
     prim_meta = build_proxy_rejuvenation_score(
         prim_meta,
-        pred_age_col="predicted_age_cv",
+        pred_age_col=pred_col_for_rejuvenation,
         chrono_age_col="age",
         out_col="rejuvenation_score",
     )
@@ -870,24 +861,67 @@ def run(cfg: PipelineConfig) -> None:
     out_col="delta_age",
     )
 
+    # ---- Tissue-level effect sizes (bulk) ----
+    try:
+        prim_tissue_effects = call_with_supported_kwargs(
+            compute_group_effect_by_tissue,
+            # Expression matrix (genes x samples)
+            expr=prim_expr,
+            matrix=prim_expr,
+            data=prim_expr,
+            X=prim_expr,
+            # Metadata
+            meta=prim_meta,
+            metadata=prim_meta,
+            meta_df=prim_meta,
+            # Outcome: we use rejuvenation_score as target
+            outcome_col="rejuvenation_score",
+            y_col="rejuvenation_score",
+            # Group/treatment fields
+            group_col="group",
+            treated_label=cfg.primate_treated_label,
+            control_label=getattr(cfg, "control_label", None),
+            control_labels=getattr(cfg, "primate_control_labels", None)
+            or [cfg.control_label],
+            tissue_col="tissue",
+            # Top genes parameter aliases
+            top_k=cfg.top_genes_per_tissue,
+            top_n=cfg.top_genes_per_tissue,
+            n_top=cfg.top_genes_per_tissue,
+        )
+
+        if prim_tissue_effects is None or getattr(prim_tissue_effects, "empty", False):
+            logger.warning(
+                "compute_group_effect_by_tissue returned no tissue effects "
+                "(prim_tissue_effects is None/empty). Downstream exosome comparison "
+                "may be non-informative."
+            )
+
+    except Exception as e:
+        logger.warning(
+            "compute_group_effect_by_tissue failed; skipping bulk/exosome "
+            "pattern comparison and exosome fraction estimation: %s",
+            str(e),
+        )
+        prim_tissue_effects = None
+
     # Global summary
     global_rejuv = summarise_global_rejuvenation(
         prim_meta,
-        group_col=cfg.group_col_candidates[0],  # p.ej. 'group'
+        group_col=cfg.group_col_candidates[0],
         value_col="delta_age",
         control_labels=cfg.primate_control_labels,
         treated_labels=[cfg.primate_treated_label],
-        min_per_group= getattr(cfg, "min_samples_per_group_for_rejuv", 4),
-        # min_per_group= 4,
+        # más laxo para ejemplos pequeños
+        min_per_group=max(2, cfg.min_samples_for_mediation // 5),
         n_bootstrap=cfg.n_bootstrap,
         random_state=cfg.random_state,
-    )
-    
+        )
+        
     logger.info("Global rejuvenation summary: %s", global_rejuv)
 
-
     # Summary by tissue
-    tissue_col = cfg.tissue_col_candidates[0]  # p.ej. 'tissue'
+    tissue_col = cfg.tissue_col_candidates[0]
     rejuv_by_tissue = summarize_rejuvenation_by_tissue(
         prim_meta,
         tissue_col=tissue_col,
@@ -895,8 +929,7 @@ def run(cfg: PipelineConfig) -> None:
         value_col="delta_age",
         control_labels=cfg.primate_control_labels,
         treated_labels=[cfg.primate_treated_label],
-        min_per_group= getattr(cfg, "min_samples_per_group_for_rejuv", 4),
-        # min_per_group = cfg.min_samples_for_mediation,
+        min_per_group=max(2, cfg.min_samples_for_mediation // 5),
         n_bootstrap=cfg.n_bootstrap,
         random_state=cfg.random_state,
     )
@@ -905,32 +938,25 @@ def run(cfg: PipelineConfig) -> None:
     rejuv_by_tissue.to_csv(rejuv_by_tissue_path, index=False)
     logger.info("Saved tissue-level rejuvenation summary to: %s", rejuv_by_tissue_path)
 
-    # ---- Tissue-level effect sizes ----
-    prim_tissue_effects = call_with_supported_kwargs(
-        compute_group_effect_by_tissue,
-        # Provide multiple possible parameter names for the expression matrix
-        expr=prim_expr,
-        matrix=prim_expr,
-        data=prim_expr,
-        X=prim_expr,
-        # Provide multiple possible parameter names for metadata
-        meta=prim_meta,
-        metadata=prim_meta,
-        meta_df=prim_meta,
-        # Outcome column name your exosome module likely expects
-        outcome_col="rejuvenation_score",
-        y_col="rejuvenation_score",
-        # Group/treatment fields
-        group_col="group",
-        treated_label=cfg.primate_treated_label,
-        control_label=getattr(cfg, "control_label", None),
-        control_labels=getattr(cfg, "primate_control_labels", None) or [cfg.control_label],
-        tissue_col="tissue",
-        # Top genes parameter name variants
-        top_k=cfg.top_genes_per_tissue,
-        top_n=cfg.top_genes_per_tissue,
-        n_top=cfg.top_genes_per_tissue,
+    # ---- Tissue-level expression effects (uses rejuvenation_score) ----
+    tissue_expr_effects = summarize_tissue_expression_effects(
+        prim_expr,
+        prim_meta,
+        tissue_col=cfg.tissue_col_candidates[0],
+        group_col=cfg.group_col_candidates[0],
+        control_labels=cfg.primate_control_labels,
+        treated_labels=[cfg.primate_treated_label],
+        min_per_group=cfg.min_samples_per_group_for_rejuv,
     )
+
+    if tissue_expr_effects.empty:
+        logger.warning(
+            "No tissue expression effects were computed (empty DataFrame). Skipping write."
+        )
+    else:
+        tissue_expr_path = cfg.results_dir / "tissue_expression_effects.csv"
+        tissue_expr_effects.to_csv(tissue_expr_path, index=False)
+        logger.info("Saved tissue expression effects to: %s", tissue_expr_path)
 
     # ---- Primate plasma (OMIX007581 wide proteomics CSV with embedded sample IDs) ----
     plasma_path = cfg.primate_plasma.matrix
@@ -950,7 +976,21 @@ def run(cfg: PipelineConfig) -> None:
         min_feature_non_nan_frac=0.5,
         min_sample_non_nan_frac=0.5,
     )
+    # ---- Construir outcome para plasma ----
+    # Ejemplo sencillo: codificar grupos Y / V / WT / GES a escala ordinal
+    group_to_state = {"Y": 0, "WT": 1, "V": -1, "GES": 2}
+    outcome = prim_plasma_meta["group"].map(group_to_state).astype(float)
+    outcome.index = prim_plasma_expr.columns  # asegurar alineación
 
+    plasma_biomarkers = compute_plasma_biomarkers(
+        plasma_expr=prim_plasma_expr,
+        plasma_meta=prim_plasma_meta,
+        outcome=outcome,
+    )
+
+    out_biomarkers_csv = cfg.results_dir / "plasma_biomarkers.csv"
+    plasma_biomarkers.to_csv(out_biomarkers_csv, index=False)
+    logger.info("Saved plasma biomarker table to: %s", out_biomarkers_csv)
     logger.info("Plasma matrix shape: %s", prim_plasma_expr.shape)
     logger.info(
         "Plasma groups: %s",
@@ -970,25 +1010,54 @@ def run(cfg: PipelineConfig) -> None:
         out_col="plasma_state_score",
     )
 
-    # ---- Cross-pattern comparison (bulk vs plasma) ----
-    pattern_comparison = call_with_supported_kwargs(
-        compare_effect_patterns,
-        prim_tissue_effects,  # effect_a
-        prim_plasma_state,  # effect_b
-        tissue_weighting=getattr(cfg, "tissue_weighting", None),
-        weighting=getattr(cfg, "tissue_weighting", None),
-    )
-    if isinstance(pattern_comparison, dict) and pattern_comparison.get("n_common_tissues", 0) == 0:
-        logger.warning("No common tissues for exosome fraction estimation; result will be non-informative.")
+   # ---- Cross-pattern comparison (bulk vs plasma) ----
+    pattern_comparison = None
+    exo_fraction = {
+        "n_common_tissues": 0,
+        "cells_median_abs": None,
+        "exo_median_abs": None,
+        "ratio": None,
+    }
 
-    # Estimate exosome-attributable fraction using bulk/tissue vs plasma proxy
-    exo_fraction = call_with_supported_kwargs(
-        estimate_exosome_fraction,
-        prim_tissue_effects,  # -> effect_cells (positional)
-        prim_plasma_state,  # -> effect_exosomes (positional)
-        method=getattr(cfg, "exosome_fraction_method", None),
-        strategy=getattr(cfg, "exosome_fraction_method", None),
-    )
+    if prim_tissue_effects is not None and getattr(prim_tissue_effects, "empty", False) is False:
+        try:
+            pattern_comparison = call_with_supported_kwargs(
+                compare_effect_patterns,
+                prim_tissue_effects,      # effect_a
+                prim_plasma_state,        # effect_b
+                tissue_weighting=getattr(cfg, "tissue_weighting", None),
+                weighting=getattr(cfg, "tissue_weighting", None),
+            )
+
+            if (
+                isinstance(pattern_comparison, dict)
+                and pattern_comparison.get("n_common_tissues", 0) == 0
+            ):
+                logger.warning(
+                    "No common tissues for exosome fraction estimation; "
+                    "result will be non-informative."
+                )
+
+            # Estimate exosome-attributable fraction
+            exo_fraction = call_with_supported_kwargs(
+                estimate_exosome_fraction,
+                prim_tissue_effects,  # -> effect_cells (positional)
+                prim_plasma_state,    # -> effect_exosomes (positional)
+                method=getattr(cfg, "exosome_fraction_method", None),
+                strategy=getattr(cfg, "exosome_fraction_method", None),
+            )
+
+        except Exception as e:
+            logger.warning(
+                "Bulk/plasma pattern comparison or exosome fraction estimation "
+                "failed: %s",
+                str(e),
+            )
+    else:
+        logger.warning(
+            "prim_tissue_effects is None or empty; skipping bulk/plasma pattern "
+            "comparison and exosome fraction estimation."
+        )
 
     # ---- Optional mediation ----
     med = None
@@ -1136,18 +1205,16 @@ def run(cfg: PipelineConfig) -> None:
         logger.warning("plot_tissue_concordance skipped: %s", str(e))
 
     # ---- Plasma biomarker ranking ----
-    try:
-        plot_plasma_biomarker_ranking(
-            prim_plasma_expr,
-            str(cfg.figures_dir / "plasma_biomarker_ranking.png"),
-            top_n=cfg.top_plasma_biomarkers,
-        )
-    except Exception as e:
-        logger.warning("plot_plasma_biomarker_ranking skipped: %s", e)
+    plot_plasma_biomarker_ranking(
+    plasma_biomarkers=plasma_biomarkers,
+    outpath=cfg.figures_dir / "plasma_biomarker_ranking.png",
+    top_n=cfg.top_plasma_biomarkers,
+)
 
     logger.info("Done. Exosome-attributable fraction estimate: %s", exo_fraction)
     if insights:
         logger.info("Translational summary written to results directory.")
+
 
 
 # -----------------------------------------------------------------------------

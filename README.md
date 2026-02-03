@@ -218,3 +218,21 @@ New outputs are written under `results/`:
 - `rejuvenation_by_tissue.csv`
 - `tissue_expression_effects.csv`
 - `figures/rejuvenation_by_group_boxplot.png` (example run)
+
+## What’s new (v0.2 – transcriptomic rejuvenation & plasma)
+
+This update focuses on making the rejuvenation signal more robust and easier to inspect:
+
+- Added a cross-validated transcriptomic clock for primate bulk tissues.
+- Added a proxy rejuvenation score (`delta_age` / `rejuvenation_score`) with:
+  - Global summary of treated vs. control animals.
+  - Tissue-level summaries (`rejuvenation_by_tissue.csv`).
+- Exported tissue expression effects (`tissue_expression_effects.csv`) to inspect which genes and tissues move the most.
+- Added a minimal plasma proteomics module:
+  - Cleaning and filtering of the OMIX007581 plasma matrix.
+  - Simple “state” outcome based on Y / WT / V / GES group labels.
+  - Ranking of top plasma biomarker candidates (`plasma_biomarkers.csv`) and a summary plot.
+
+The exosome-attributable fraction and translational insights modules are still experimental:
+when the necessary inputs (mouse tissue effects, mouse expression log matrix) are not available,
+the pipeline now fails gracefully and emits explicit warnings instead of crashing.

@@ -41,7 +41,7 @@ class PipelineConfig:
     primate_methylation: Optional[OmixPaths] = None
     mouse_exosome_bulk: Optional[OmixPaths] = None
     max_allowed_samples: int = 5000
-    min_samples_for_mediation: int = 6
+    min_samples_for_mediation: int = 12
     min_samples_per_group_for_rejuv: int = 2
     mediation_bootstrap: int = 500
     clock_model: str = "ridge"  # or whatever you implemented
@@ -73,7 +73,8 @@ class PipelineConfig:
     # Feature selection
     # n_top_features_expr: int = 5000
     n_top_features_expr = 0
-    n_top_features_clock: int = 3000
+    # n_top_features_clock: int = 3000
+    n_top_features_clock: int = 2000
     n_top_features_proxy: int = 1000
 
     # Plasma score
