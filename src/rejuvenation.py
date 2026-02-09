@@ -22,6 +22,11 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy import stats
+from sklearn.linear_model import LinearRegression
+from .logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def compute_delta_age(
@@ -176,47 +181,376 @@ def summarize_tissue_expression_effects(
     meta: pd.DataFrame,
     tissue_col: str,
     group_col: str,
-    control_labels: List[str],
-    treated_labels: List[str],
-    min_per_group: int = 4,
+    control_labels: Sequence[str],
+    treated_labels: Sequence[str],
+    min_per_group: int = 2,
 ) -> pd.DataFrame:
     """
-    Expression-based tissue signal.
+    Summarize tissue-wise expression effects using group labels.
 
-    For each tissue, compute a simple concordance measure:
-    mean treated-vs-control effect across genes and overall sign.
-    Lightweight Phase 2 version; GSEA and richer analyses are not yet included.
+    For each tissue, compare the mean expression profile between
+    control and treated samples and return:
+
+      - tissue
+      - n_ctrl
+      - n_trt
+      - top_genes   (comma-separated string of top-effect genes)
+      - mean_effect (mean (treated - control) across all genes)
+      - median_effect
+
+    Parameters
+    ----------
+    expr : DataFrame
+        Gene expression matrix (genes x samples).
+    meta : DataFrame
+        Sample metadata. Must contain tissue_col, group_col and sample_id.
+    tissue_col : str
+        Column name for tissue/organ.
+    group_col : str
+        Column name for experimental group (e.g. Y_C, O_C, O_GES...).
+    control_labels : list-like
+        Labels considered as control.
+    treated_labels : list-like
+        Labels considered as treated.
+    min_per_group : int
+        Minimum number of samples per group within a tissue to compute effects.
+
+    Returns
+    -------
+    DataFrame
+        One row per tissue with effect size summary.
     """
-    if tissue_col not in meta.columns or group_col not in meta.columns:
-        raise ValueError("Missing tissue or group columns in metadata.")
 
-    # Aseguramos misma ordenación de columnas que en meta
-    expr = expr.loc[:, meta["sample_id"].values]
+    required_cols = {tissue_col, group_col, "sample_id"}
+    missing = required_cols - set(meta.columns)
+    if missing:
+        logger.warning(
+            "summarize_tissue_expression_effects: missing required "
+            "metadata columns: %s. Returning empty DataFrame.",
+            ", ".join(sorted(missing)),
+        )
+        return pd.DataFrame(
+            columns=["tissue", "n_ctrl", "n_trt", "top_genes", "mean_effect", "median_effect"]
+        )
+
+    # Drop rows without tissue / group
+    meta = meta.copy()
+    meta = meta.loc[meta[tissue_col].notna() & meta[group_col].notna()]
+    if meta.empty:
+        logger.warning("summarize_tissue_expression_effects: no rows with both tissue and group. Returning empty.")
+        return pd.DataFrame(
+            columns=["tissue", "n_ctrl", "n_trt", "top_genes", "mean_effect", "median_effect"]
+        )
+
+    # Keep only control + treated labels
+    valid_labels = list(control_labels) + list(treated_labels)
+    meta = meta.loc[meta[group_col].isin(valid_labels)]
+    if meta.empty:
+        logger.warning(
+            "summarize_tissue_expression_effects: no rows with group in %s. Returning empty.",
+            valid_labels,
+        )
+        return pd.DataFrame(
+            columns=["tissue", "n_ctrl", "n_trt", "top_genes", "mean_effect", "median_effect"]
+        )
+
+    # Use sample_id as index to align with expr columns
+    meta["sample_id"] = meta["sample_id"].astype(str)
+    meta = meta.set_index("sample_id")
+
+    # Align expression columns to metadata
+    common_ids = expr.columns.intersection(meta.index)
+    if len(common_ids) < (2 * min_per_group):
+        logger.warning(
+            "summarize_tissue_expression_effects: only %d common samples between expr and meta. Returning empty.",
+            len(common_ids),
+        )
+        return pd.DataFrame(
+            columns=["tissue", "n_ctrl", "n_trt", "top_genes", "mean_effect", "median_effect"]
+        )
+
+    expr = expr.loc[:, common_ids]
+    meta = meta.loc[common_ids]
 
     rows = []
     for tissue, sub_meta in meta.groupby(tissue_col):
+        # Boolean masks in this tissue
         is_ctrl = sub_meta[group_col].isin(control_labels)
         is_trt = sub_meta[group_col].isin(treated_labels)
 
-        if is_ctrl.sum() < min_per_group or is_trt.sum() < min_per_group:
+        n_ctrl = int(is_ctrl.sum())
+        n_trt = int(is_trt.sum())
+
+        if n_ctrl < min_per_group or n_trt < min_per_group:
             continue
 
-        cols_ctrl = sub_meta.loc[is_ctrl, "sample_id"].values
-        cols_trt = sub_meta.loc[is_trt, "sample_id"].values
+        # Sample IDs in each group (now they are the index)
+        ctrl_cols = sub_meta.index[is_ctrl].tolist()
+        trt_cols = sub_meta.index[is_trt].tolist()
 
-        # medias por grupo
-        mean_ctrl = expr[cols_ctrl].mean(axis=1)
-        mean_trt = expr[cols_trt].mean(axis=1)
-        diff = mean_trt - mean_ctrl  # efecto por gen
+        # Make sure they are all in the expression matrix
+        ctrl_cols = [c for c in ctrl_cols if c in expr.columns]
+        trt_cols = [c for c in trt_cols if c in expr.columns]
+
+        if len(ctrl_cols) < min_per_group or len(trt_cols) < min_per_group:
+            continue
+
+        # Mean expression per gene in each group
+        expr_ctrl = expr.loc[:, ctrl_cols].mean(axis=1)
+        expr_trt = expr.loc[:, trt_cols].mean(axis=1)
+
+        diff = expr_trt - expr_ctrl
+
+        # Top genes by absolute effect
+        top_genes = diff.abs().sort_values(ascending=False).head(20).index.tolist()
+        top_genes_str = ",".join(map(str, top_genes))
 
         rows.append(
             {
                 "tissue": tissue,
-                "n_ctrl": int(is_ctrl.sum()),
-                "n_trt": int(is_trt.sum()),
+                "n_ctrl": len(ctrl_cols),
+                "n_trt": len(trt_cols),
+                "top_genes": top_genes_str,
                 "mean_effect": float(diff.mean()),
                 "median_effect": float(diff.median()),
             }
         )
 
+    if not rows:
+        logger.warning(
+            "summarize_tissue_expression_effects: no tissues passed the filters (min_per_group=%d). "
+            "Returning empty DataFrame.",
+            min_per_group,
+        )
+        return pd.DataFrame(
+            columns=["tissue", "n_ctrl", "n_trt", "top_genes", "mean_effect", "median_effect"]
+        )
+
     return pd.DataFrame(rows)
+
+def compute_plasma_biomarkers(
+    plasma_expr: pd.DataFrame,
+    plasma_meta: pd.DataFrame,
+    outcome: pd.Series,
+    min_non_nan_frac: float = 0.7,
+) -> pd.DataFrame:
+    """
+    Rank plasma proteins by association with an outcome (e.g. rejuvenation score).
+
+    Parameters
+    ----------
+    plasma_expr : DataFrame
+        Rows = proteins, cols = samples (matching plasma_meta index or sample_id).
+    plasma_meta : DataFrame
+        Must be index-aligned or contain a column to align with plasma_expr columns.
+    outcome : Series
+        Numeric phenotype per sample (e.g. rejuvenation score, state index, etc.).
+        Index MUST be sample IDs matching plasma_expr columns.
+    min_non_nan_frac : float
+        Minimum fraction of non-NaN values per protein to include in the analysis.
+
+    Returns
+    -------
+    DataFrame with columns: protein, spearman_r, pval, qval, abs_r, direction.
+    """
+    # Ensuring alignment
+    common = plasma_expr.columns.intersection(outcome.index)
+    if len(common) < 3:
+        raise ValueError(f"Too few samples with both plasma and outcome: {len(common)}")
+
+    expr = plasma_expr.loc[:, common]
+    y = outcome.loc[common].astype(float)
+
+    # Filtered by missingness
+    non_nan_frac = expr.notna().mean(axis=1)
+    expr = expr.loc[non_nan_frac >= min_non_nan_frac]
+    if expr.empty:
+        raise ValueError("All plasma features dropped due to missingness.")
+
+    records = []
+    for protein, row in expr.iterrows():
+        x = row.values.astype(float)
+        mask = ~np.isnan(x) & ~np.isnan(y.values)
+        if mask.sum() < 3:
+            continue
+        r, p = stats.spearmanr(x[mask], y.values[mask])
+        if np.isnan(r):
+            continue
+        records.append((protein, r, p))
+
+    if not records:
+        return pd.DataFrame(columns=["protein", "spearman_r", "pval", "qval", "abs_r", "direction"])
+
+    df = pd.DataFrame(records, columns=["protein", "spearman_r", "pval"])
+
+    # Simple FDR (Benjamini–Hochberg)
+    df = df.sort_values("pval").reset_index(drop=True)
+    m = len(df)
+    df["qval"] = df["pval"] * m / (df.index + 1)
+    df["qval"] = df["qval"].clip(upper=1.0)
+
+    df["abs_r"] = df["spearman_r"].abs()
+    df["direction"] = np.where(df["spearman_r"] > 0, "pro-aging", "pro-rejuvenation")
+
+    return df
+
+    return pd.DataFrame(rows)
+
+def simple_mediation_bootstrap(
+    df: pd.DataFrame,
+    x_col: str,
+    m_col: str,
+    y_col: str,
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> dict:
+    """
+    Simple (non-parametric) mediation bootstrap:
+    X -> M -> Y, con Y ajustado también por X.
+
+    Devuelve:
+      - total_effect
+      - direct_effect
+      - indirect_effect
+      - bootstrap CIs (95%) de cada uno
+    """
+    df = df[[x_col, m_col, y_col]].dropna().copy()
+    if df.shape[0] < 10:
+        logger.warning(
+            "simple_mediation_bootstrap: too few samples (n=%d). Returning NaNs.",
+            df.shape[0],
+        )
+        return {
+            "n_samples": int(df.shape[0]),
+            "total_effect": np.nan,
+            "direct_effect": np.nan,
+            "indirect_effect": np.nan,
+            "total_ci_low": np.nan,
+            "total_ci_high": np.nan,
+            "direct_ci_low": np.nan,
+            "direct_ci_high": np.nan,
+            "indirect_ci_low": np.nan,
+            "indirect_ci_high": np.nan,
+        }
+
+    rng = np.random.default_rng(seed)
+
+    X = df[[x_col]].to_numpy(dtype=float)
+    M = df[[m_col]].to_numpy(dtype=float)
+    Y = df[[y_col]].to_numpy(dtype=float)
+
+    # a) Efecto total: Y ~ X
+    reg_total = LinearRegression().fit(X, Y)
+    total_effect = float(reg_total.coef_[0, 0])
+
+    # b) Efecto directo y mediado:
+    #    1) M ~ X  -> coef a
+    reg_a = LinearRegression().fit(X, M)
+    a = float(reg_a.coef_[0, 0])
+
+    #    2) Y ~ X + M -> coef b (M), coef c' (X)
+    XM = np.concatenate([X, M], axis=1)
+    reg_b = LinearRegression().fit(XM, Y)
+    b = float(reg_b.coef_[0, 1])   # coef de M
+    direct_effect = float(reg_b.coef_[0, 0])  # coef de X
+    indirect_effect = a * b
+
+    total_samples = []
+    direct_samples = []
+    indirect_samples = []
+
+    for _ in range(n_boot):
+        idx = rng.integers(0, df.shape[0], size=df.shape[0])
+        Xb = X[idx]
+        Mb = M[idx]
+        Yb = Y[idx]
+
+        reg_total_b = LinearRegression().fit(Xb, Yb)
+        total_b = float(reg_total_b.coef_[0, 0])
+
+        reg_a_b = LinearRegression().fit(Xb, Mb)
+        a_b = float(reg_a_b.coef_[0, 0])
+
+        XM_b = np.concatenate([Xb, Mb], axis=1)
+        reg_b_b = LinearRegression().fit(XM_b, Yb)
+        b_b = float(reg_b_b.coef_[0, 1])
+        direct_b = float(reg_b_b.coef_[0, 0])
+        indirect_b = a_b * b_b
+
+        total_samples.append(total_b)
+        direct_samples.append(direct_b)
+        indirect_samples.append(indirect_b)
+
+    def ci(arr):
+        lo, hi = np.percentile(arr, [2.5, 97.5])
+        return float(lo), float(hi)
+
+    t_lo, t_hi = ci(total_samples)
+    d_lo, d_hi = ci(direct_samples)
+    i_lo, i_hi = ci(indirect_samples)
+
+    out = {
+        "n_samples": int(df.shape[0]),
+        "total_effect": total_effect,
+        "direct_effect": direct_effect,
+        "indirect_effect": indirect_effect,
+        "total_ci_low": t_lo,
+        "total_ci_high": t_hi,
+        "direct_ci_low": d_lo,
+        "direct_ci_high": d_hi,
+        "indirect_ci_low": i_lo,
+        "indirect_ci_high": i_hi,
+    }
+    logger.info("Mediation bootstrap done: %s", out)
+    return out
+
+def run_simple_causal_model(
+    prim_meta: pd.DataFrame,
+    prim_plasma_meta: pd.DataFrame,
+    cfg,
+) -> Optional[pd.DataFrame]:
+    """
+    Phase 4 helper: build a simple causal model:
+    group_binary -> plasma_state_score -> rejuvenation_score
+    on matched animals.
+    """
+    if "animal_id" not in prim_meta.columns or "animal_id" not in prim_plasma_meta.columns:
+        logger.warning("run_simple_causal_model: animal_id missing; cannot align plasma and tissue.")
+        return None
+
+    if "plasma_state_score" not in prim_plasma_meta.columns:
+        logger.warning("run_simple_causal_model: plasma_state_score missing; skipping mediation.")
+        return None
+
+    if "rejuvenation_score" not in prim_meta.columns:
+        logger.warning("run_simple_causal_model: rejuvenation_score missing; skipping mediation.")
+        return None
+
+    meta = prim_meta.copy()
+    if "group_binary" not in meta.columns:
+        meta["group_binary"] = (meta["group"] == cfg.primate_treated_label).astype(int)
+
+    merged = meta.merge(
+        prim_plasma_meta[["animal_id", "plasma_state_score"]],
+        on="animal_id",
+        how="inner",
+    )
+    merged = merged.dropna(subset=["group_binary", "plasma_state_score", "rejuvenation_score"])
+
+    if merged.shape[0] < cfg.min_samples_for_mediation:
+        logger.warning(
+            "run_simple_causal_model: too few matched samples for mediation (n=%d).",
+            merged.shape[0],
+        )
+        return None
+
+    med = simple_mediation_bootstrap(
+        merged,
+        x_col="group_binary",
+        m_col="plasma_state_score",
+        y_col="rejuvenation_score",
+        n_boot=cfg.mediation_bootstrap,
+        seed=cfg.random_seed,
+    )
+
+    return pd.DataFrame([med])

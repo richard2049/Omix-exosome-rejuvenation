@@ -41,7 +41,7 @@ class PipelineConfig:
     primate_methylation: Optional[OmixPaths] = None
     mouse_exosome_bulk: Optional[OmixPaths] = None
     max_allowed_samples: int = 5000
-    min_samples_for_mediation: int = 6
+    min_samples_for_mediation: int = 12
     min_samples_per_group_for_rejuv: int = 2
     mediation_bootstrap: int = 500
     clock_model: str = "ridge"  # or whatever you implemented
@@ -50,6 +50,7 @@ class PipelineConfig:
     top_genes_per_tissue: int = 100
     top_plasma_biomarkers: int = 50
     enable_mediation: bool = True
+    enable_causal_decomposition: bool = True
     random_seed: int = 42
     focus_genes: list[str] = ("FOXO3", "SRC")
     tissue_weighting: str = "uniform"
@@ -73,7 +74,8 @@ class PipelineConfig:
     # Feature selection
     # n_top_features_expr: int = 5000
     n_top_features_expr = 0
-    n_top_features_clock: int = 3000
+    # n_top_features_clock: int = 3000
+    n_top_features_clock: int = 2000
     n_top_features_proxy: int = 1000
 
     # Plasma score
