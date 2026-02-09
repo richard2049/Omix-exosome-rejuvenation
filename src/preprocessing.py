@@ -120,24 +120,59 @@ def filter_top_variance(matrix: pd.DataFrame, n_top: int) -> pd.DataFrame:
 
     return matrix.iloc[idx]
 
-
 def build_proxy_rejuvenation_score(
-     meta: pd.DataFrame,
-    pred_age_col: str = "predicted_age",
+    meta: pd.DataFrame,
+    pred_age_col: str = "predicted_age_cv",
     chrono_age_col: str = "age",
     out_col: str = "rejuvenation_score",
-    **kwargs,
 ) -> pd.DataFrame:
+    """
+    Attach a simple proxy rejuvenation score to the metadata.
+
+    The score is defined as:
+        rejuvenation_score = chronological_age - predicted_biological_age
+
+    So:
+      - negative values = sample looks biologically YOUNGER than its chronological age
+      - positive values = sample looks biologically OLDER
+
+    Parameters
+    ----------
+    meta : DataFrame
+        Sample-level metadata. Must already contain the predicted and chronological
+        age columns.
+    pred_age_col : str
+        Name of the column with predicted biological age (e.g. 'predicted_age_cv').
+    chrono_age_col : str
+        Name of the column with chronological age (e.g. 'age').
+    out_col : str
+        Name of the output column to create (e.g. 'rejuvenation_score').
+
+    Returns
+    -------
+    DataFrame
+        Copy of `meta` with a new `out_col` float column.
+    """
     meta = meta.copy()
 
-    if pred_age_col not in meta.columns or chrono_age_col not in meta.columns:
+    # Sanity check: both columns must exist and be numeric-convertible
+    missing = [c for c in (pred_age_col, chrono_age_col) if c not in meta.columns]
+    if missing:
         raise ValueError(
-            f"Missing columns for rejuvenation score: "
-            f"{pred_age_col} or {chrono_age_col}"
+            f"build_proxy_rejuvenation_score: missing columns in meta: {missing}. "
+            f"Available columns: {list(meta.columns)}"
         )
 
     pred = pd.to_numeric(meta[pred_age_col], errors="coerce")
     chrono = pd.to_numeric(meta[chrono_age_col], errors="coerce")
 
-    meta[out_col] = chrono - pred  # positive = "younger than expected"
+    # Optional: warn if we lose many rows
+    valid_frac = pred.notna().mean()
+    if valid_frac < 0.5:
+        print(
+            f"build_proxy_rejuvenation_score: only {valid_frac:.2%} of rows have "
+            f"numeric '{pred_age_col}'. Rejuvenation scores may be unreliable."
+        )
+
+    meta[out_col] = chrono - pred
     return meta

@@ -394,8 +394,6 @@ def compute_plasma_biomarkers(
 
     return df
 
-    return pd.DataFrame(rows)
-
 def simple_mediation_bootstrap(
     df: pd.DataFrame,
     x_col: str,
