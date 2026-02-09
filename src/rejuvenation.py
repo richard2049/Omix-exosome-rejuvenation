@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from scipy import stats
+from sklearn.linear_model import LinearRegression
 from .logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -393,4 +394,161 @@ def compute_plasma_biomarkers(
 
     return df
 
-    return pd.DataFrame(rows)
+def simple_mediation_bootstrap(
+    df: pd.DataFrame,
+    x_col: str,
+    m_col: str,
+    y_col: str,
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> dict:
+    """
+    Simple (non-parametric) mediation bootstrap:
+    X -> M -> Y, con Y ajustado también por X.
+
+    Devuelve:
+      - total_effect
+      - direct_effect
+      - indirect_effect
+      - bootstrap CIs (95%) de cada uno
+    """
+    df = df[[x_col, m_col, y_col]].dropna().copy()
+    if df.shape[0] < 10:
+        logger.warning(
+            "simple_mediation_bootstrap: too few samples (n=%d). Returning NaNs.",
+            df.shape[0],
+        )
+        return {
+            "n_samples": int(df.shape[0]),
+            "total_effect": np.nan,
+            "direct_effect": np.nan,
+            "indirect_effect": np.nan,
+            "total_ci_low": np.nan,
+            "total_ci_high": np.nan,
+            "direct_ci_low": np.nan,
+            "direct_ci_high": np.nan,
+            "indirect_ci_low": np.nan,
+            "indirect_ci_high": np.nan,
+        }
+
+    rng = np.random.default_rng(seed)
+
+    X = df[[x_col]].to_numpy(dtype=float)
+    M = df[[m_col]].to_numpy(dtype=float)
+    Y = df[[y_col]].to_numpy(dtype=float)
+
+    # a) Efecto total: Y ~ X
+    reg_total = LinearRegression().fit(X, Y)
+    total_effect = float(reg_total.coef_[0, 0])
+
+    # b) Efecto directo y mediado:
+    #    1) M ~ X  -> coef a
+    reg_a = LinearRegression().fit(X, M)
+    a = float(reg_a.coef_[0, 0])
+
+    #    2) Y ~ X + M -> coef b (M), coef c' (X)
+    XM = np.concatenate([X, M], axis=1)
+    reg_b = LinearRegression().fit(XM, Y)
+    b = float(reg_b.coef_[0, 1])   # coef de M
+    direct_effect = float(reg_b.coef_[0, 0])  # coef de X
+    indirect_effect = a * b
+
+    total_samples = []
+    direct_samples = []
+    indirect_samples = []
+
+    for _ in range(n_boot):
+        idx = rng.integers(0, df.shape[0], size=df.shape[0])
+        Xb = X[idx]
+        Mb = M[idx]
+        Yb = Y[idx]
+
+        reg_total_b = LinearRegression().fit(Xb, Yb)
+        total_b = float(reg_total_b.coef_[0, 0])
+
+        reg_a_b = LinearRegression().fit(Xb, Mb)
+        a_b = float(reg_a_b.coef_[0, 0])
+
+        XM_b = np.concatenate([Xb, Mb], axis=1)
+        reg_b_b = LinearRegression().fit(XM_b, Yb)
+        b_b = float(reg_b_b.coef_[0, 1])
+        direct_b = float(reg_b_b.coef_[0, 0])
+        indirect_b = a_b * b_b
+
+        total_samples.append(total_b)
+        direct_samples.append(direct_b)
+        indirect_samples.append(indirect_b)
+
+    def ci(arr):
+        lo, hi = np.percentile(arr, [2.5, 97.5])
+        return float(lo), float(hi)
+
+    t_lo, t_hi = ci(total_samples)
+    d_lo, d_hi = ci(direct_samples)
+    i_lo, i_hi = ci(indirect_samples)
+
+    out = {
+        "n_samples": int(df.shape[0]),
+        "total_effect": total_effect,
+        "direct_effect": direct_effect,
+        "indirect_effect": indirect_effect,
+        "total_ci_low": t_lo,
+        "total_ci_high": t_hi,
+        "direct_ci_low": d_lo,
+        "direct_ci_high": d_hi,
+        "indirect_ci_low": i_lo,
+        "indirect_ci_high": i_hi,
+    }
+    logger.info("Mediation bootstrap done: %s", out)
+    return out
+
+def run_simple_causal_model(
+    prim_meta: pd.DataFrame,
+    prim_plasma_meta: pd.DataFrame,
+    cfg,
+) -> Optional[pd.DataFrame]:
+    """
+    Phase 4 helper: build a simple causal model:
+    group_binary -> plasma_state_score -> rejuvenation_score
+    on matched animals.
+    """
+    if "animal_id" not in prim_meta.columns or "animal_id" not in prim_plasma_meta.columns:
+        logger.warning("run_simple_causal_model: animal_id missing; cannot align plasma and tissue.")
+        return None
+
+    if "plasma_state_score" not in prim_plasma_meta.columns:
+        logger.warning("run_simple_causal_model: plasma_state_score missing; skipping mediation.")
+        return None
+
+    if "rejuvenation_score" not in prim_meta.columns:
+        logger.warning("run_simple_causal_model: rejuvenation_score missing; skipping mediation.")
+        return None
+
+    meta = prim_meta.copy()
+    if "group_binary" not in meta.columns:
+        meta["group_binary"] = (meta["group"] == cfg.primate_treated_label).astype(int)
+
+    merged = meta.merge(
+        prim_plasma_meta[["animal_id", "plasma_state_score"]],
+        on="animal_id",
+        how="inner",
+    )
+    merged = merged.dropna(subset=["group_binary", "plasma_state_score", "rejuvenation_score"])
+
+    if merged.shape[0] < cfg.min_samples_for_mediation:
+        logger.warning(
+            "run_simple_causal_model: too few matched samples for mediation (n=%d).",
+            merged.shape[0],
+        )
+        return None
+
+    med = simple_mediation_bootstrap(
+        merged,
+        x_col="group_binary",
+        m_col="plasma_state_score",
+        y_col="rejuvenation_score",
+        n_boot=cfg.mediation_bootstrap,
+        seed=cfg.random_seed,
+    )
+
+    return pd.DataFrame([med])

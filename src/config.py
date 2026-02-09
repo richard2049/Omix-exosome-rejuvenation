@@ -50,6 +50,7 @@ class PipelineConfig:
     top_genes_per_tissue: int = 100
     top_plasma_biomarkers: int = 50
     enable_mediation: bool = True
+    enable_causal_decomposition: bool = True
     random_seed: int = 42
     focus_genes: list[str] = ("FOXO3", "SRC")
     tissue_weighting: str = "uniform"

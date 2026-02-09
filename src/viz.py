@@ -279,3 +279,62 @@ def plot_rejuvenation_by_group(
     plt.close()
 
     logger.info("Saved rejuvenation-by-group plot: %s", out_path)
+
+def plot_mediation_effects_bar(
+    med: pd.DataFrame,
+    out_path: Path,
+    title: str = "Decomposition of treatment effect (cells vs exosomes)",
+) -> None:
+    """
+    Simple bar plot for mediation results.
+
+    Expects a DataFrame `med` with at least the columns:
+      - 'total_effect'
+      - 'direct_effect'
+      - 'indirect_effect'
+
+    Typically this would be the summary row from simple_mediation_bootstrap.
+    """
+    if med is None or (isinstance(med, pd.DataFrame) and med.empty):
+        logger.warning("plot_mediation_effects_bar: empty mediation results; skipping.")
+        return
+
+    # Accept Series, dict or DataFrame
+    if isinstance(med, pd.Series):
+        df = med.to_frame().T
+    elif isinstance(med, dict):
+        df = pd.DataFrame([med])
+    else:
+        df = med.copy()
+
+    required = ["total_effect", "direct_effect", "indirect_effect"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        logger.warning(
+            "plot_mediation_effects_bar: missing columns %s; expected %s. Skipping.",
+            missing,
+            required,
+        )
+        return
+
+    row = df.iloc[0]
+    effects = [
+        float(row["total_effect"]),
+        float(row["direct_effect"]),
+        float(row["indirect_effect"]),
+    ]
+    labels = ["Total", "Direct (cells)", "Indirect (exo)"]
+
+    plt.figure(figsize=(6, 4))
+    plt.bar(labels, effects)
+    plt.axhline(0.0, linestyle="--", linewidth=1)
+
+    plt.ylabel("Effect size (Δ years or standardized units)")
+    plt.title(title)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+    logger.info("Saved mediation effects bar plot: %s", out_path)

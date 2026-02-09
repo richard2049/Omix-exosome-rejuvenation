@@ -115,6 +115,7 @@ The `scripts/process_OMIX007582_Mammal40.R` script uses
   biological sample.
 - Current implementation wires a placeholder for exosome-attributable fraction; on the public SRSC OMIX datasets there is no shared tissue axis between bulk and plasma.
 - Mouse block and cross-species translational summaries are scaffolded but not yet implemented.
+- For the plasma block (OMIX007581) the public deposit only provides a single wide CSV file (`PlasmaProtein_exp_mat`, proteins × samples). There is no separate metadata file linking plasma samples to individual animals or to the tissue RNA-seq samples from OMIX007580. 
 
 Consequently:
 
@@ -126,6 +127,18 @@ Consequently:
   not used for strong sample-level conclusions.
 - The fraction estimate is still marked as non-informative (n_common_tissues = 0, ratio = NaN).
 - The pipeline safely skips the mouse block and the cross-species translational summaries and logs a warning.
+- There is **no reliable `animal_id` field** that would allow us to
+match “this plasma sample” to “this bulk transcriptomic sample” for the
+same monkey using only the public data. Because of this, the following components are **optional** and remain disabled or no-op when `animal_id` is missing in the plasma metadata:
+
+  - Bootstrap mediation of a plasma “state score” between treatment and
+    `rejuvenation_score`;
+  - Simple causal decomposition of the rejuvenation effect into
+    cell-intrinsic vs exosome-mediated components.
+
+All other parts of the pipeline (transcriptomic clock, rejuvenation by
+group and by tissue, tissue-level expression shifts, and plasma biomarker
+ranking) run on the public data without additional metadata.
 
 ---
 
