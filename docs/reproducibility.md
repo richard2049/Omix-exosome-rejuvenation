@@ -29,7 +29,10 @@ python -m src.run_pipeline --profile auto
 - `full` reads locally downloaded inputs from `data/RAW/data`.
 - `auto` prefers the full layout when present and otherwise uses the demo
   layout.
-- `--safe` applies conservative laptop settings.
+- `--safe` applies conservative laptop settings: it reduces expression
+  features and resampling counts and disables mediation. Use it for smoke
+  testing, not to reproduce the numerical results reported for the standard
+  full profile.
 - `--data-root <PATH>` overrides the selected profile's data directory without
   changing source code.
 
