@@ -171,11 +171,11 @@ Run the scientific guardrail tests with:
 python -m pytest -q tests/test_scientific_guardrails.py
 ```
 
-Run the full-data profile only after placing the public source files in the
-documented local data layout:
+Run the full-data profile against an independently downloaded, read-only data
+directory:
 
 ```bash
-python -m src.run_pipeline --profile full
+python -m src.run_pipeline --profile full --data-root /path/to/omix-data
 python -m src.report_figures
 ```
 
@@ -203,6 +203,20 @@ Key reading paths:
 
 Questions, reproducibility problems, and metadata corrections can be reported
 through [GitHub Issues](https://github.com/richard2049/Omix-exosome-rejuvenation/issues).
+
+## Current Status and Next Milestone
+
+The core multimodal workflow, scientific guardrails, public demo, and
+interpretation-facing report layer are implemented. Current evidence supports
+reproducible evaluation of transcriptomic, plasma, methylation, and
+exosome-aligned signals, while several mechanism-facing estimates remain
+uncertain or unavailable.
+
+The next scientific milestone is to obtain or independently validate the
+author-side plasma-to-animal identity map. This would determine whether the
+current linked mediation results can be strengthened beyond exploratory
+association. Additional mechanism-attribution extensions remain secondary
+until that identity evidence is resolved.
 
 ## Citation and License
 

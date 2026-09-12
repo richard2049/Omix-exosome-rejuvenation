@@ -16,7 +16,7 @@ __pycache__/
 # Local artifacts
 results/
 figures/
-run.log
+*.log
 .vscode/
 
 # Data (no version large raw datasets)
