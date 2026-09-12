@@ -1,0 +1,51 @@
+name: Technical integrity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-demo:
+    name: Tests and public demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash -el {0}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Create Conda environment
+        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3
+        with:
+          activate-environment: srsc
+          environment-file: environment.yml
+          auto-activate-base: false
+
+      - name: Compile Python sources
+        run: python -m compileall -q src tests
+
+      - name: Run unit and scientific guardrail tests
+        env:
+          MPLBACKEND: Agg
+        run: python -m pytest -q
+
+      - name: Run public demo
+        env:
+          MPLBACKEND: Agg
+          PYTHONHASHSEED: "0"
+        run: python -m src.run_pipeline --profile demo --safe
+
+      - name: Validate demo output contract
+        run: python -m src.demo_validation

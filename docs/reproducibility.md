@@ -48,11 +48,21 @@ Run the pipeline and then regenerate the interpretation-facing report layer:
 
 ```bash
 python -m src.run_pipeline --profile demo --safe
+python -m src.demo_validation
 python -m src.report_figures
 ```
 
+`src.demo_validation` checks that the demo generated the expected result tables
+and preserved their machine-readable evidence fields. It does not assess
+biological validity or upgrade any evidence claim.
+
 The report command reads existing `results/*.csv`; it does not recompute the
 analysis or replace diagnostic plots.
+
+Pull requests and updates to `main` run the same compilation, test, demo, and
+output-contract checks in GitHub Actions. Passing CI demonstrates technical
+integrity of the public workflow, not biological validity of the underlying
+study design, metadata mappings, or causal interpretation.
 
 When preparing a public release from reviewed full-profile results, refresh the
 three tracked README figures explicitly:
