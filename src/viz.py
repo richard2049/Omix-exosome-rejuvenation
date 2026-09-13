@@ -280,12 +280,8 @@ def plot_rejuvenation_by_group(
     plt.figure(figsize=(10, 6))
     ax = plt.gca()
 
-    # Boxplots
-    bp = ax.boxplot(
-        data_per_group,
-        labels=None,  # we will set labels with n later
-        showfliers=True,
-    )
+    # Set tick labels separately to support both older and current Matplotlib.
+    ax.boxplot(data_per_group, showfliers=True)
 
     # Jitter of individual points
     for i, (g, y) in enumerate(zip(groups, data_per_group), start=1):

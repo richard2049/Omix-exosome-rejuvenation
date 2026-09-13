@@ -4,6 +4,8 @@ channels:
   - defaults
 dependencies:
   - python=3.11
+  # Avoid Windows MKL runtime failures observed during scikit-learn Ridge fits.
+  - libblas=*=*openblas
   - pandas
   - numpy
   - scipy

@@ -29,12 +29,42 @@ python -m src.run_pipeline --profile auto
 - `full` reads locally downloaded inputs from `data/RAW/data`.
 - `auto` prefers the full layout when present and otherwise uses the demo
   layout.
-- `--safe` applies conservative laptop settings.
+- `--safe` applies conservative laptop settings: it reduces expression
+  features and resampling counts and disables mediation. Use it for smoke
+  testing, not to reproduce the numerical results reported for the standard
+  full profile.
 - `--data-root <PATH>` overrides the selected profile's data directory without
   changing source code.
 
 Raw inputs are immutable. Generated tables and figures are written to
 `results/` and `figures/`.
+
+## Repository Workflow and Local Data
+
+The Git repository is the single source of truth for code, configuration,
+tests, demo inputs, and public documentation. Develop changes on focused
+branches and integrate them through reviewed pull requests; do not maintain a
+second code copy through manual file synchronization.
+
+If separate clean and experimental directories are useful, create a Git
+worktree so both directories share the same history:
+
+```bash
+git switch main
+git pull --ff-only
+git worktree add ../Omix-exosome-rejuvenation-dev -b analysis/my-change main
+```
+
+Full OMIX inputs should remain outside version control in a read-only local
+data directory. Point the canonical checkout to that directory explicitly:
+
+```bash
+python -m src.run_pipeline --profile full --data-root /path/to/omix-data
+```
+
+Do not commit machine-specific absolute paths. A second directory on the same
+disk is a convenience copy, not a data backup; maintain a separately stored,
+checksum-verified backup of irreplaceable source data.
 
 ## Validation
 
@@ -48,11 +78,21 @@ Run the pipeline and then regenerate the interpretation-facing report layer:
 
 ```bash
 python -m src.run_pipeline --profile demo --safe
+python -m src.demo_validation
 python -m src.report_figures
 ```
 
+`src.demo_validation` checks that the demo generated the expected result tables
+and preserved their machine-readable evidence fields. It does not assess
+biological validity or upgrade any evidence claim.
+
 The report command reads existing `results/*.csv`; it does not recompute the
 analysis or replace diagnostic plots.
+
+Pull requests and updates to `main` run the same compilation, test, demo, and
+output-contract checks in GitHub Actions. Passing CI demonstrates technical
+integrity of the public workflow, not biological validity of the underlying
+study design, metadata mappings, or causal interpretation.
 
 When preparing a public release from reviewed full-profile results, refresh the
 three tracked README figures explicitly:
