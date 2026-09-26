@@ -15,14 +15,29 @@ final scientific endpoint.
 
 The preferred question is:
 
-> How much of the observed macaque rejuvenation signal is consistent with an
-> exosome-associated mechanism, and how much appears non-exosome-aligned or
-> tissue-intrinsic?
+> Which tissue responses are shared between SRC treatment in macaques and
+> SRC-derived exosome treatment in mice? How do these responses compare with
+> WTC treatment in macaques and WTC-derived exosomes in mice?
 
-With the current public data, this should be implemented as evidence-weighted
-alignment and falsification rather than direct causal decomposition. A numeric
-exosome-versus-cellular partition requires stronger linked sample metadata than
-the public files currently provide.
+SRCs are senescence-resistant human mesenchymal progenitor cells; WTCs are
+their wild-type cell comparator. In the [original Cell study](https://doi.org/10.1016/j.cell.2025.05.021),
+the macaque intervention used whole cells (SRCs or WTCs) or saline, whereas
+the mouse aging intervention used SRC-derived exosomes (SRC-Exo), WTC-derived
+exosomes (WTC-Exo), or saline. These are separate cohorts within the same
+study, not external replication. Other mouse experiments in that study used
+whole cells to assess retention, biodistribution, and tumorigenicity.
+
+The question concerns concordance in treatment responses, not a causal
+partition of rejuvenation into exosome and non-exosome effects. The repository
+can nevertheless quantify the resemblance: standardized effects are compared
+through response direction, relative magnitude, and the component aligned with
+the macaque pattern. These three quantities form an exploratory response
+profile; they do not estimate an exosome-attributable percentage. Confirmed
+cross-modal identity would
+enable individual-level analyses, but would not by itself identify a causal
+partition. The current comparison concerns tissue-level clock effects; shared
+molecular programs remain a question for further analysis, not an established
+result.
 
 ## Objective Ladder
 
@@ -50,25 +65,47 @@ Useful outputs include:
 
 - tissue ranking by rejuvenation magnitude and uncertainty;
 - tissue-specific discordance or weak-response flags;
-- plasma biomarker ranking with linkage confidence;
+- accession-preserving plasma treatment-response candidates, kept separate from cross-modal linkage confidence;
 - sensitivity summaries for control set and feature-threshold choices.
 
 ### Objective 3: Estimate exosome-aligned mechanism support
 
-The repository should compare macaque rejuvenation-associated effects with
-independent exosome-relevant evidence, especially `OMIX009283`, without
-claiming direct primate mediation.
+The repository should compare macaque treatment effects with the mouse
+exosome intervention from the same study, using the processed `OMIX009283`
+resource and auditing its correspondence to `CRA023573`. This provides a
+complementary experiment, not external validation or direct primate mediation.
 
 Interpretation: mechanism support or mechanism inconsistency.
 
+The primary quantitative summary uses only organ-compatible tissue pairs and
+reports three components rather than collapsing the evidence into a percentage:
+
+- response-pattern direction (`cosine_similarity`);
+- relative standardized magnitude (`relative_response_norm`);
+- aligned response component (`aligned_response_coefficient`).
+
+Bootstrap intervals, treatment-label permutations, and leave-one-tissue-out
+results show how much the interpretation depends on sampling and on any single
+tissue. A stable positive alignment would be evidence compatible with a shared
+response pattern; a weak, negative, or tissue-dependent result would count
+against that simple hypothesis. Neither result identifies causal mediation in
+macaques.
+
 Preferred language:
 
-- "exosome-aligned contribution";
+- "concordant treatment responses across species";
 - "mechanism support";
 - "consistent with an exosome-associated mechanism";
-- "non-exosome-aligned residual signal".
+- "discordant treatment responses".
 
-Avoid unless Level 4 evidence is available:
+These are descriptive terms, not a standardized evidence grade or a new
+mechanism score. Discordance does not identify a tissue-intrinsic or
+non-exosome mechanism: species, tissue matching, exposure, and estimation
+uncertainty can also contribute to differences.
+
+The following claims require a study design and explicit assumptions that
+identify the relevant causal effects; a computable mediation estimate alone
+is not sufficient:
 
 - "causal decomposition";
 - "the exosome fraction is X percent";

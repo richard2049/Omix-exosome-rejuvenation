@@ -8,7 +8,7 @@ plasma/exosome-associated aging signals.**
 This project asks a focused but ambitious question:
 
 > Do the rejuvenation-associated signals reported after senescence-resistant
-> stem-cell treatment look more consistent with tissue-intrinsic change or with
+> cell (SRC) treatment look more consistent with tissue-intrinsic change or with
 > a plasma/exosome-associated mechanism?
 
 Distinguishing these explanations matters because tissue-intrinsic change and
@@ -18,45 +18,58 @@ these alternatives, but direct exosome causality would require recipient-level
 exposure or cargo-transfer evidence that is not currently available.
 
 The repository reanalyzes public OMIX transcriptomic, proteomic, methylation,
-and supporting mouse data. It treats causal attribution as an estimability
-problem: every mechanism-facing result carries sample counts, uncertainty,
-evidence level, and an explicit reason when the public data cannot support the
-intended claim.
+and supporting mouse data. It tests which biological questions the available
+study design can answer, reporting uncertainty and keeping treatment responses
+separate from evidence of a causal mechanism.
 
 ## Evidence at a Glance
 
-This table separates analysis availability, design level, and the scientific
-status of each claim in the current full-data run:
+This table separates analysis availability, design requirements, and the scientific
+status of each claim after the September 2026 corrected full-profile rerun.
+All numerical results shown here were regenerated under the current animal-level,
+linkage, and cross-species contracts.
 
 | Evidence layer | Question | Claim status | Current result |
 |---|---|---|---|
-| Transcriptomic age model | Does tissue expression predict chronological age? | **Observed** | Grouped cross-validation across 61 animals gives Spearman `r = 0.89` and MAE `= 2.65` years. |
-| Tissue treatment effects | Do treated tissues show younger-like transcriptomic age? | **Observed** | Effects are estimated in 39 tissues, but every confidence interval crosses zero. |
-| Plasma proteomics | Is the circulating protein state associated with age or intervention? | **Exploratory** | Twenty-four of 32 plasma samples have high-confidence animal links; associations remain hypothesis-generating. |
+| Transcriptomic age model | Does tissue expression predict chronological age? | **Observed** | Controls-only nested cross-fitting across 60 evaluation animals gives Spearman `r = 0.87` and animal-balanced MAE `= 3.47` years, with substantial age-range compression. |
+| Tissue treatment effects | Do treated tissues show younger-like transcriptomic age? | **Observed, not statistically supported** | The global SRC-minus-vehicle estimate is slightly older-like (`+0.46` years; 95% CI `-0.76` to `1.61`); no tissue passes the primary family-wise correction. |
+| Plasma proteomics | Is the circulating protein state associated with age or intervention? | **Exploratory** | The reference-trained protein axis shifts younger-like after SRC (`-1.69` axis units versus vehicle), but its interval crosses zero and the old-young reference gap is unstable. |
 | Macaque methylation | Is there independent epigenetic evidence of rejuvenation? | **Not estimable** | The Mammal40 technical-to-biological sample map is unavailable. |
-| Macaque-mouse exosome alignment | Are macaque tissue effects concordant with mouse exosome perturbations? | **Exploratory** | Four shared tissues show limited directional agreement; permutation tests are not significant. |
-| Plasma-tissue mediation | Can a linked plasma state statistically mediate the transcriptomic response? | **Exploratory** | The gate passes on 24 animals, but all four mediation-effect confidence intervals cross zero. |
+| Macaque-mouse exosome alignment | Are macaque tissue effects concordant with mouse exosome perturbations? | **Exploratory** | Three organ-compatible pairs give positive directional alignment (`C = 0.73`), but uncertainty is wide and the permutation test is not significant (`p = 0.285`). |
+| Plasma-tissue mediation | Can a linked plasma state statistically mediate the transcriptomic response? | **Not estimable** | Naming alone no longer passes the identity gate; mediation is disabled pending confirmed cross-modal links. |
 | Causal attribution | Did exosomes cause the macaque rejuvenation response? | **Not established** | The public design lacks direct exosome exposure or cargo-to-recipient outcome linkage. |
 
-`Observed` means directly estimated, not necessarily statistically supported.
-`Supported` is reserved for a claim strengthened by concordant orthogonal
+`Observed` means estimated, not necessarily statistically supported;
+`Exploratory` means hypothesis-generating. `Supported` requires corroborating
 evidence; no current mechanism-facing claim meets that threshold.
-`Exploratory` marks hypothesis-generating evidence. `Not estimable` identifies
-a missing design or data requirement, whereas `Not established` means the
-available analysis does not justify the requested mechanistic conclusion.
+`Not estimable` denotes a missing design or data requirement; `Not established`
+denotes a conclusion the analysis cannot justify. See the
+[inference framework](docs/inference_framework.md) for the full definitions.
 
-The defensible conclusion is not a numeric exosome-versus-cellular partition.
-The public data currently support reproduction, guarded association, and
-hypothesis generation while exposing the metadata needed for stronger causal
-inference.
+This reanalysis distinguishes transcriptomic age prediction from
+treatment-response evidence. The corrected primary clock recovers
+age-associated expression across held-out animals, but does not support robust
+transcriptomic-clock rejuvenation after SRC treatment. Plasma and mouse
+exosome data retain suggestive response signals that are biologically useful
+for prioritization, while remaining too uncertain for a rejuvenation or causal
+claim.
+
+Across the three primary-compatible cross-species pairs, kidney and muscle are
+directionally aligned while liver is discordant. The positive aggregate
+alignment therefore motivates a more specific molecular question—what programs
+are shared between macaque SRC treatment and mouse SRC-Exo perturbation?—but
+does not estimate an exosome-attributable fraction or establish transfer to
+macaques.
 
 Read the full interpretation in [RESULTS.md](RESULTS.md).
 
 ![Transcriptomic aging and tissue-level treatment effects](docs/assets/aging_rejuvenation_signal.png)
 
-*Figure 1. The clock is evaluated with animal-grouped cross-validation before
-estimating tissue-level treatment shifts in `delta_age`. Displayed tissues are
-prioritization candidates; all 39 tissue confidence intervals cross zero.*
+*Figure 1. The controls-only clock is evaluated with animal-grouped nested
+cross-fitting before estimating animal-level SRC-minus-vehicle shifts in
+`delta_age`. Three of 39 pointwise intervals exclude zero, but none of the
+tissue effects passes the primary family-wise correction; displayed tissues
+are prioritization candidates, not confirmed rejuvenation effects.*
 
 ## Evidence Architecture
 
@@ -75,31 +88,36 @@ The workflow combines scientific analysis with explicit estimability controls:
 - A report layer that converts machine-readable result tables into
   interpretation-facing figures without recomputing the analysis.
 
-### Design and Estimability Ladder
+### Analysis Requirements and Estimability
 
-| Level | Design requirement reached | Current design state |
+| Analysis | Design requirement | Current status |
 |---|---|---|
-| 0 | Not estimable | Methylation biological validation |
-| 1 | Macaque age and treatment-effect analysis | Estimable, tissue effects uncertain |
-| 2 | Plasma association with valid animal linkage | Estimable on 24 linked animals; small cohort |
-| 3 | Orthogonal exosome-alignment analysis | Design rung reached; no stable alignment support (`n = 4`) |
-| 4 | Linked mediation estimable under stated assumptions | Estimable but unstable; not a causal partition |
+| Methylation validation | Biological sample identities | Not estimable: sample map unavailable |
+| Macaque age and treatment effects | Animal-grouped prediction and within-tissue comparisons | Estimable, tissue effects uncertain |
+| Plasma–tissue association | Confirmed shared animal identities | Not estimable: cross-modal identity remains unconfirmed |
+| Cross-species alignment | Compatible tissues and treatment contrasts | Estimable for three organ-compatible pairs; alignment remains exploratory |
+| Linked mediation | Linked biological units and causal identification assumptions | Not estimable with current public identity evidence |
 
-Unlike the result summary above, this ladder records which design requirements
-were reached. It does not replace effect uncertainty or automatically imply
-strong support.
+This table describes analysis-specific requirements, not a hierarchy of
+scientific certainty. An analysis being estimable does not establish effect
+significance or causal interpretation.
 
 ## Data and Workflow
 
-The primary public datasets are:
+The primary datasets and supporting public resources are:
 
 - `OMIX007580`: macaque bulk transcriptomics.
 - `OMIX007581`: macaque plasma proteomics.
 - `OMIX007582`: Mammal40 methylation, currently limited by the missing sample
   map.
 - `OMIX009283`: mouse exosome-related mechanism support.
+- `OMIX009654` and `OMIX009655`: candidate exosome proteomics and metabolomics,
+  audited separately from recipient plasma and awaiting sample labels.
 - `OMIX007583`, `OMIX007586`, and `OMIX009284`: targeted validation or audited
   supporting resources, not additional primary cohorts.
+
+The [source audit](docs/data_refresh.md) documents additional public specimen
+metadata, article-linked sequencing deposits, and the remaining identity gaps.
 
 The analysis proceeds through auditable, gated stages:
 
@@ -107,7 +125,7 @@ The analysis proceeds through auditable, gated stages:
 Public OMIX data
   -> metadata, group-label, and identity audits
   -> grouped transcriptomic aging clock
-  -> tissue rejuvenation summaries
+  -> tissue treatment-response summaries
   -> plasma linkage and oriented aging axis
   -> gated animal-level mediation
 
@@ -120,8 +138,9 @@ Result CSVs                 -> interpretation-facing report figures
 
 *Figure 2. Each modality follows a distinct analysis path before contributing
 to interpretation. Estimability gates block unsupported transitions;
-Mammal40 methylation remains unavailable for biological validation, and mouse
-alignment remains exploratory rather than direct macaque validation.*
+plasma-to-tissue identity and Mammal40 biological validation remain unresolved,
+while within-plasma summaries remain available. The three-tissue mouse
+alignment is exploratory cross-species evidence, not direct macaque validation.*
 
 Group-label interpretation follows
 [the canonical crosswalk](docs/group_label_crosswalk.md). A modality-by-modality
@@ -146,10 +165,10 @@ established.
 
 ![Animal-linkage and mediation estimability guardrail](docs/assets/estimability_guardrail.png)
 
-*Figure 3. The current full-data linkage passes predefined sample and collision
-criteria, permitting animal-level mediation. The estimates remain unstable;
-the alternative branch shows the structured output written when the gate
-fails.*
+*Figure 3. The refreshed identity audit retains 24 candidate aliases but no
+confirmed cross-modal links. The gate therefore blocks animal-level mediation
+and writes a structured non-estimable result. The alternative branch shows
+the requirements for a future linked analysis.*
 
 See the [scientific inference and estimability framework](docs/inference_framework.md)
 for the complete claim rules.
@@ -181,8 +200,9 @@ python -m src.report_figures
 
 The full OMIX datasets are not redistributed here. Demo and full runs share the
 same entry point and output schemas, but reduced demo data may produce different
-estimability levels. See the [reproducibility guide](docs/reproducibility.md) for setup, profiles,
-input expectations, and the optional R/Bioconductor workflow.
+analysis availability. See the [reproducibility guide](docs/reproducibility.md)
+for profiles, input requirements, and optional workflows.
+Mediation is disabled by default; enabling it does not bypass the identity gate.
 
 ## Repository and Documentation
 
@@ -207,16 +227,18 @@ through [GitHub Issues](https://github.com/richard2049/Omix-exosome-rejuvenation
 ## Current Status and Next Milestone
 
 The core multimodal workflow, scientific guardrails, public demo, and
-interpretation-facing report layer are implemented. Current evidence supports
-reproducible evaluation of transcriptomic, plasma, methylation, and
-exosome-aligned signals, while several mechanism-facing estimates remain
-uncertain or unavailable.
+interpretation-facing report layer are implemented. The corrected full-data
+run does not support robust transcriptomic-clock rejuvenation, but it identifies
+testable plasma-protein and cross-species response candidates while preserving
+their uncertainty and mechanism boundaries.
 
 The next scientific milestone is to obtain or independently validate the
-author-side plasma-to-animal identity map. This would determine whether the
-current linked mediation results can be strengthened beyond exploratory
-association. Additional mechanism-attribution extensions remain secondary
-until that identity evidence is resolved.
+author-side plasma-to-animal identity map and the missing macaque transcript
+feature map. These resources would determine whether plasma and tissue data can
+support individual-level association and whether macaque molecular programs
+can enter gene-, pathway-, and target-level analysis. In parallel, the current
+protein and compatible-tissue contrasts can prioritize hypotheses without
+pretending to provide a measured exosome-attributable fraction.
 
 ## Citation and License
 

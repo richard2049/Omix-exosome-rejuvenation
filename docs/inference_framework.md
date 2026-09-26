@@ -181,9 +181,14 @@ The following are not, by themselves, evidence of exosome causality:
 - inferred exosome fractions;
 - pathway overlap.
 
-The legacy `exosome_fraction_summary.csv` must therefore remain explicitly
-described as a compatibility/exploratory artifact unless a defensible causal
-decomposition becomes estimable.
+`exosome_fraction_summary.csv` therefore records a structured
+`causal_exosome_fraction_not_identified` result. This is a limitation of the
+available experimental design, not a failure to analyse the data: the macaque
+experiment compares whole-cell treatment with vehicle, whereas the mouse
+experiment compares exosome treatment with vehicle. Without a randomized
+whole-cell-versus-exosome comparison in the same biological system, or a
+validated individual-level mediator, their ratio cannot identify the fraction
+of the macaque response caused by exosomes.
 
 ---
 
@@ -203,6 +208,45 @@ Before claiming concordance:
 - preserve effect direction;
 - report available uncertainty;
 - record missing or non-comparable features.
+
+The executable anatomical contract is
+`config/cross_species_tissue_map.csv`. Liver, kidney, lung, and skeletal-muscle
+pairs are classified as organ-compatible but not anatomically identical.
+Whole mouse brain versus macaque hippocampus is `weak_context`: it may be
+reported as a pairwise sensitivity but must not enter the primary alignment
+summary. Exact dissection equivalence remains `SOURCE VERIFICATION PENDING`.
+
+### Quantitative response-alignment profile
+
+The absence of an identifiable causal fraction does not make the cross-species
+comparison non-quantitative. For each primary-compatible tissue pair, the
+pipeline expresses the treatment contrast as Hedges' g, a small-sample
+standardized mean difference. It then reports three complementary quantities:
+
+- `cosine_similarity` (C) describes whether the tissue-response patterns point
+  in the same direction, from -1 (opposite) through 0 (unrelated) to 1
+  (parallel);
+- `relative_response_norm` (R) compares the overall standardized response
+  magnitude in mouse with that in macaque;
+- `aligned_response_coefficient` (A = C x R) is the component of the mouse
+  response vector aligned with the macaque response vector.
+
+These quantities answer different questions and must be shown together. A is
+especially useful as a compact resemblance coefficient, but it is not a
+percentage or biological mixture fraction: it may be negative or exceed 1.
+Tissues receive equal weight in the primary profile. The analysis bootstraps
+macaque animals jointly across tissues, resamples mouse observations within
+tissue, treatment arm, and sex, performs treatment-label permutations, and
+reports leave-one-tissue-out ranges. At least three valid primary-compatible
+tissue pairs are required. Whole mouse brain versus macaque hippocampus remains
+outside this primary profile.
+
+The resulting profile can support a conclusion that the mouse exosome response
+is directionally consistent, inconsistent, stronger, weaker, or unstable
+relative to the macaque whole-cell response. It cannot determine how much of
+the macaque effect was carried by exosomes. Molecular-program alignment would
+also require validated feature identity and orthology; the current
+`OMIX007580-01` anonymous rows do not meet that requirement.
 
 ### Interpretation hierarchy
 

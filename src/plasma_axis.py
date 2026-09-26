@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-"""Oriented plasma age-state axis utilities.
+"""Reference-trained, oriented plasma age-state axis utilities.
 
-The axis is PC1 of high-variance plasma proteins, with its sign oriented so
-that higher values are older-like when old-control plasma samples have a higher
-median score than young controls. This makes PC1 interpretable without turning
-it into causal evidence.
+The axis is learned only from young and vehicle-treated old reference samples,
+then applied without refitting to WTC/SRC samples. Its sign is oriented so that
+higher values are older-like when vehicle controls have a higher median score
+than young controls. This makes PC1 interpretable without turning it into
+causal evidence.
 """
 
 from collections.abc import Sequence
@@ -123,10 +124,11 @@ def build_oriented_plasma_aging_axis(
     plasma_expr: pd.DataFrame,
     plasma_meta: pd.DataFrame,
     *,
+    feature_annotations: pd.DataFrame | None = None,
     sample_col: str = "sample_id",
     group_col: str = "group",
     young_groups: Sequence[str] = ("Y",),
-    old_control_groups: Sequence[str] = ("V", "WT"),
+    old_control_groups: Sequence[str] = ("V",),
     treated_groups: Sequence[str] = ("GES",),
     n_top_proteins: int = 50,
     min_group_samples: int = 2,
@@ -136,7 +138,7 @@ def build_oriented_plasma_aging_axis(
     random_state: int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build scores, loadings, and a summary for an oriented plasma PC1 axis."""
-    method = "oriented_plasma_pc1_age_axis"
+    method = "reference_trained_oriented_plasma_pc1_age_axis"
     if plasma_expr.empty or plasma_meta.empty:
         stub = _result_stub("Plasma expression matrix or metadata is empty.", method)
         return stub.copy(), stub.copy(), stub
@@ -154,7 +156,31 @@ def build_oriented_plasma_aging_axis(
 
     meta = meta.set_index(sample_col).loc[common].reset_index()
     expr = plasma_expr.loc[:, common].apply(pd.to_numeric, errors="coerce")
-    keep = (expr.notna().mean(axis=1) >= float(min_non_nan_frac)) & (expr.var(axis=1, skipna=True) > 0)
+    finite_values = expr.to_numpy(dtype=float)
+    finite_values = finite_values[np.isfinite(finite_values)]
+    if finite_values.size == 0 or np.any(finite_values <= 0):
+        stub = _result_stub(
+            "Plasma age-state axis requires strictly positive finite abundances for log2.",
+            method,
+        )
+        return meta, pd.DataFrame(), stub
+    expr = np.log2(expr)
+    young_set = {_clean_group(group) for group in young_groups}
+    old_set = {_clean_group(group) for group in old_control_groups}
+    treated_set = {_clean_group(group) for group in treated_groups}
+    reference_groups = young_set | old_set
+    reference_samples = meta.loc[meta["group_clean"].isin(reference_groups), sample_col].tolist()
+    if len(reference_samples) < 2 * int(min_group_samples):
+        stub = _result_stub(
+            "Cannot train plasma PC1: insufficient young and vehicle-reference samples.",
+            method,
+        )
+        return meta, pd.DataFrame(), stub
+
+    reference_expr = expr.loc[:, reference_samples]
+    keep = (
+        reference_expr.notna().mean(axis=1) >= float(min_non_nan_frac)
+    ) & (reference_expr.var(axis=1, skipna=True) > 0)
     expr = expr.loc[keep]
     if expr.shape[0] < 2:
         stub = _result_stub("Too few non-missing variable plasma proteins for PC1.", method)
@@ -163,27 +189,51 @@ def build_oriented_plasma_aging_axis(
     # Public plasma exports can contain repeated or missing protein labels.
     # Select by stable internal row IDs to avoid duplicate-label expansion.
     expr = expr.copy()
-    protein_names = pd.Index(expr.index).astype(str)
+    source_feature_ids = pd.Index(expr.index).astype(str)
     feature_ids = [f"plasma_feature_{i:05d}" for i in range(expr.shape[0])]
     expr.index = feature_ids
-    protein_lookup = pd.Series(protein_names.to_numpy(), index=feature_ids)
+    source_id_lookup = pd.Series(source_feature_ids.to_numpy(), index=feature_ids)
+
+    annotation_lookup = pd.DataFrame(index=source_feature_ids)
+    if feature_annotations is not None and not feature_annotations.empty:
+        annotation_lookup = feature_annotations.copy()
+        if "feature_id" in annotation_lookup.columns:
+            annotation_lookup = annotation_lookup.set_index("feature_id", drop=False)
+        annotation_lookup.index = annotation_lookup.index.astype(str)
+        if annotation_lookup.index.has_duplicates:
+            stub = _result_stub("Plasma feature annotation IDs must be unique.", method)
+            return meta, pd.DataFrame(), stub
+        annotation_lookup = annotation_lookup.reindex(source_feature_ids)
 
     n_top = int(min(max(2, int(n_top_proteins)), expr.shape[0]))
-    top_features = expr.var(axis=1, skipna=True).sort_values(ascending=False).head(n_top).index
-    top_proteins = protein_lookup.loc[top_features].to_numpy(dtype=str)
-    sub = expr.loc[top_features].T
-    sub = sub.fillna(sub.median(axis=0))
+    reference_internal = expr.loc[:, reference_samples]
+    top_features = (
+        reference_internal.var(axis=1, skipna=True)
+        .sort_values(ascending=False)
+        .head(n_top)
+        .index
+    )
+    top_source_ids = source_id_lookup.loc[top_features].astype(str)
+    train_sub = expr.loc[top_features, reference_samples].T
+    train_medians = train_sub.median(axis=0)
+    train_sub = train_sub.fillna(train_medians)
+    all_sub = expr.loc[top_features, common].T.fillna(train_medians)
+    if train_sub.isna().any().any() or all_sub.isna().any().any():
+        stub = _result_stub(
+            "Cannot train plasma PC1: reference-derived imputation left missing values.",
+            method,
+        )
+        return meta, pd.DataFrame(), stub
 
     scaler = StandardScaler()
-    x = scaler.fit_transform(sub.to_numpy(dtype=float))
+    x_train = scaler.fit_transform(train_sub.to_numpy(dtype=float))
+    x_all = scaler.transform(all_sub.to_numpy(dtype=float))
     pca = PCA(n_components=1, random_state=random_state)
-    raw_scores = pca.fit_transform(x).flatten()
+    pca.fit(x_train)
+    raw_scores = pca.transform(x_all).flatten()
     raw_loadings = pca.components_[0].astype(float)
     explained = float(pca.explained_variance_ratio_[0])
 
-    young_set = {_clean_group(group) for group in young_groups}
-    old_set = {_clean_group(group) for group in old_control_groups}
-    treated_set = {_clean_group(group) for group in treated_groups}
     score_df = meta.copy()
     score_df["raw_pc1_score"] = raw_scores
 
@@ -202,17 +252,36 @@ def build_oriented_plasma_aging_axis(
     score_df["axis_orientation"] = "higher_older_like"
     score_df["n_top_proteins"] = n_top
     score_df["pc1_explained_variance_ratio"] = explained
+    score_df["analysis_scale"] = "log2_positive_abundance"
 
+    top_annotations = annotation_lookup.reindex(top_source_ids.to_numpy()).copy()
+    protein_accessions = (
+        top_annotations["protein_accession"].astype("string").fillna("").to_numpy()
+        if "protein_accession" in top_annotations.columns
+        else top_source_ids.to_numpy(dtype=str)
+    )
+    gene_names = (
+        top_annotations["gene_name"].astype("string").fillna("").to_numpy()
+        if "gene_name" in top_annotations.columns
+        else np.repeat("", len(top_source_ids))
+    )
+    protein_labels = [
+        str(gene).strip() or str(accession).strip() or str(feature_id)
+        for gene, accession, feature_id in zip(gene_names, protein_accessions, top_source_ids)
+    ]
     loading_df = pd.DataFrame(
         {
-            "feature_id": pd.Index(top_features).astype(str),
-            "protein": top_proteins,
+            "feature_id": top_source_ids.to_numpy(dtype=str),
+            "protein_accession": protein_accessions,
+            "gene_name": gene_names,
+            "protein": protein_labels,
             "raw_loading": raw_loadings,
             "loading": raw_loadings * orientation_sign,
             "abs_loading": np.abs(raw_loadings),
             "n_top_proteins": n_top,
             "pc1_explained_variance_ratio": explained,
             "axis_orientation": "higher_older_like",
+            "analysis_scale": "log2_positive_abundance",
         }
     ).sort_values("abs_loading", ascending=False).reset_index(drop=True)
     loading_df.insert(0, "loading_rank", np.arange(1, len(loading_df) + 1))
@@ -257,6 +326,8 @@ def build_oriented_plasma_aging_axis(
     )
     summary = {
         "n_samples": int(len(score_df)),
+        "n_reference_training_samples": int(len(reference_samples)),
+        "reference_training_groups": ",".join(sorted(reference_groups)),
         "n_top_proteins": n_top,
         "n_young": int(len(young)),
         "n_old_controls": int(len(old)),
@@ -264,6 +335,7 @@ def build_oriented_plasma_aging_axis(
         "pc1_explained_variance_ratio": explained,
         "orientation_sign": orientation_sign,
         "axis_orientation": "higher_older_like",
+        "analysis_scale": "log2_positive_abundance",
         "young_control_median": young_median,
         "old_control_median": old_median,
         "treated_median": treated_median,
@@ -290,7 +362,7 @@ def build_oriented_plasma_aging_axis(
         "method": method,
         "ci_low": ci.get("treated_vs_old_control_ci_low", np.nan),
         "ci_high": ci.get("treated_vs_old_control_ci_high", np.nan),
-        "evidence_level": 2,
+        "evidence_level": 1,
     }
     summary.update(ci)
     score_df["available"] = True
@@ -300,7 +372,7 @@ def build_oriented_plasma_aging_axis(
     score_df["method"] = method
     score_df["ci_low"] = np.nan
     score_df["ci_high"] = np.nan
-    score_df["evidence_level"] = 2
+    score_df["evidence_level"] = 1
     loading_df["available"] = True
     loading_df["estimable"] = True
     loading_df["reason"] = ""
@@ -308,7 +380,7 @@ def build_oriented_plasma_aging_axis(
     loading_df["method"] = method
     loading_df["ci_low"] = np.nan
     loading_df["ci_high"] = np.nan
-    loading_df["evidence_level"] = 2
+    loading_df["evidence_level"] = 1
     return score_df, loading_df, pd.DataFrame([summary])
 
 
@@ -320,7 +392,7 @@ def correlate_plasma_axis_with_delta_age(
     delta_age_col: str = "delta_age",
     animal_col: str = "animal_id",
     confidence_col: str = "animal_id_confidence",
-    high_conf_values: Sequence[str] = ("high", "metadata", "metadata_exact"),
+    high_conf_values: Sequence[str] = ("high", "metadata_exact"),
     min_animals: int = 8,
     n_bootstrap: int = 1000,
     n_permutations: int = 1000,

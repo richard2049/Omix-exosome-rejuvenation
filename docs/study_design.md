@@ -169,13 +169,21 @@ The paper does not present one single `n` for every assay. Sample size varies by
 | Repo component | Status | Evidence |
 |---|---|---|
 | `OMIX007580` bulk transcriptomics | `reported` | Matches the repo bulk RNA-seq block used for tissue-level aging and rejuvenation analyses. |
-| `OMIX007581` plasma proteomics | `reported` | Matches the repo plasma block used for biomarker ranking and exploratory cross-modality linkage. |
+| `OMIX007581` plasma proteomics | `reported` | Used for exploratory within-plasma `GES - V`, `WT - V`, and `GES - WT` protein contrasts and a reference-trained age-state axis; cross-modality linkage remains a separate unresolved question. |
 | `OMIX007582` DNA methylation | `reported` | Matches the repo optional methylation block and aligns with paper methylation-age analyses. |
 | `OMIX007583-01.zip` ovary expression subset | `reported` | Aligns with paper ovarian / reproductive analyses and confirms subset-internal use of `V`, `WT`, and `GES` labels for female old intervention-era samples. |
 | `OMIX007586-02.zip` hippocampus expression subset | `reported` | Aligns with paper hippocampal analyses and directly maps `WT-MSC-*`, `GESMSC-*`, and `O-V-*` samples to `A4_WTC`, `A4_SRC`, and `A4_Ctrl` in `sample.info.csv`. |
-| Repo `rejuvenation_score`, causal gate, exosome fraction | `reported` | These are repository-level analytic abstractions, not article-native endpoint names. |
+| Repo `rejuvenation_score`, causal gate, response-alignment profile, and exosome-fraction status | `reported` | These are repository-level analytic abstractions, not article-native endpoint names. The profile quantifies non-causal cross-species resemblance; the fraction remains causally unidentified. |
 
 ## Known gaps and ambiguities
+
+September 2026 update: [PRJCA035748](https://ngdc.cncb.ac.cn/bioproject/browse/PRJCA035748)
+provides additional specimen provenance for the article-linked GSA deposits.
+The [refresh audit](data_refresh.md) records two additional cargo resources,
+OMIX009654 and OMIX009655, and their conflict with the plasma wording in the
+deposit titles. These are separate from recipient plasma OMIX007581. Bulk
+BioSample aliases do not establish cross-modal individual identity; the 24
+plasma naming matches are now candidates rather than confirmed links.
 
 1. `SRC` in the paper and `GES` in OMIX/repo metadata are strongly supported across paper, OMIX, BioProject, and `OMIX007586` subset metadata, but the label translation is still cross-source and not written as a single canonical legend in the article PDF.
 2. `WTC` in the paper and `WT` in OMIX/repo metadata are strongly supported across paper, OMIX, BioProject, and `OMIX007586` subset metadata, but the names are still not text-identical.
@@ -187,9 +195,10 @@ The paper does not present one single `n` for every assay. Sample size varies by
 ## Practical implications for this repo
 
 1. The repo objective is scientifically aligned with the paper's mechanism question, especially around whether broad geroprotection may be mediated in part by SRC-derived exosomes.
-2. The repo should continue to separate:
-   - reproduced study-aligned analyses, and
-   - exploratory causal decomposition layers that go beyond what the paper directly reports.
+2. The repo should continue to separate reproduced study-aligned analyses,
+   exploratory cross-species response alignment, and causal decomposition. The
+   first two can be quantified under their documented assumptions; the third
+   is not identified by the available design.
 3. Use `docs/group_label_crosswalk.md` when translating article cohort names into repo group names.
 4. Any claim equating repo `O_GES` directly with article `A4-SRC`, or repo `O_V` with article `A4-Ctrl`, should still be phrased as a cross-source mapping rather than a verbatim article label substitution.
 
