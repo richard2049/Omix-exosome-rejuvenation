@@ -1,0 +1,6 @@
+mouse_tissue,primate_tissue,compatibility_tier,include_in_primary,source_status,mapping_note
+brain,Hippocampus,weak_context,false,SOURCE_VERIFICATION_PENDING,Whole mouse brain is not anatomically equivalent to macaque hippocampus; retain only as a contextual sensitivity.
+kidney,Renal_cortex,organ_compatible,true,SOURCE_VERIFICATION_PENDING,Same organ but different anatomical granularity; do not describe as exact tissue equivalence.
+liver,Liver_L,organ_compatible,true,SOURCE_VERIFICATION_PENDING,Same organ but the macaque label specifies a sampled lobe or region.
+lung,Lung_R3_3,organ_compatible,true,SOURCE_VERIFICATION_PENDING,Same organ but the macaque label specifies a sampled region; currently not estimable in the shared clock-effect set.
+muscle,Quadriceps_muscle,organ_compatible,true,SOURCE_VERIFICATION_PENDING,Skeletal muscle is compared with macaque quadriceps; muscle subtype and dissection equivalence are not established.

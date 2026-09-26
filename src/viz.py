@@ -84,11 +84,26 @@ def plot_plasma_biomarker_ranking(
 
     df = plasma_biomarkers.copy()
 
-    # Case 1: expected ranking exists
-    if "spearman_r" in df.columns:
+    value_col = None
+    # Current contract: prespecified treatment contrasts on log2 abundance.
+    if "log2_fold_change" in df.columns:
+        if "is_primary" in df.columns:
+            primary = df["is_primary"].astype("string").str.lower().isin(["true", "1"])
+            if primary.any():
+                df = df.loc[primary].copy()
+        df["abs_log2_fold_change"] = pd.to_numeric(
+            df["log2_fold_change"], errors="coerce"
+        ).abs()
+        score_col = "abs_log2_fold_change"
+        value_col = "log2_fold_change"
+        xlabel = "Adjusted log2 fold-change (GES - vehicle)"
+        title = "Treatment-associated plasma protein signals"
+    # Legacy contract retained only so historical outputs remain renderable.
+    elif "spearman_r" in df.columns:
         if "abs_r" not in df.columns:
             df["abs_r"] = pd.to_numeric(df["spearman_r"], errors="coerce").abs()
         score_col = "abs_r"
+        value_col = score_col
         xlabel = "|Spearman r|"
     else:
         if requires_spearman:
@@ -122,7 +137,12 @@ def plot_plasma_biomarker_ranking(
             return
 
     # Label column fallback
-    label_col = "protein" if "protein" in df.columns else ("Gene name" if "Gene name" in df.columns else None)
+    if value_col is None:
+        value_col = score_col
+    label_col = next(
+        (col for col in ["gene_name", "protein", "protein_accession", "Gene name"] if col in df.columns),
+        None,
+    )
     if label_col is None:
         logger.warning("No label column ('protein'/'Gene name') found; skipping plot.")
         return
@@ -135,7 +155,13 @@ def plot_plasma_biomarker_ranking(
     df = df.sort_values(score_col, ascending=True).tail(top_n)
 
     plt.figure()
-    plt.barh(df[label_col].astype(str), df[score_col].astype(float))
+    labels = df[label_col].astype("string").fillna("").str.strip()
+    if "protein_accession" in df.columns:
+        accessions = df["protein_accession"].astype("string").fillna("").str.strip()
+        labels = labels.where(labels.ne(""), accessions)
+    plt.barh(labels.astype(str), pd.to_numeric(df[value_col], errors="coerce"))
+    if value_col == "log2_fold_change":
+        plt.axvline(0, color="black", linewidth=0.8)
     plt.xlabel(xlabel)
     plt.title(title)
 

@@ -57,6 +57,12 @@ From `data/RAW/data/OMIX007580-02.csv` unique-animal metadata:
 
 ## Plasma label crosswalk
 
+Group-label interpretation and individual identity are distinct. The table
+below describes likely treatment groups; it does not validate shared animal
+numbering across assays. Since the September 2026 refresh, the pipeline marks
+name-derived animal links `inferred`, including V, WT, and GES candidates.
+The earlier high-confidence *group* crosswalk does not override that status.
+
 From `data/RAW/data/OMIX007581-01.csv`, the plasma columns encode sex and treatment/group:
 
 | Plasma pattern | Likely repo group | Confidence | Notes |

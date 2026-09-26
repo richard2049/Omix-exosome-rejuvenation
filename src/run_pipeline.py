@@ -8,7 +8,8 @@ End-to-end analysis pipeline for the OMIX Exosome Rejuvenation project:
 - trains and cross-validates a lightweight transcriptomic clock,
 - derives a proxy rejuvenation score,
 - estimates tissue-level exosome-like effects,
-- processes plasma proteomics (OMIX007581) to build a plasma state score,
+- processes plasma proteomics (OMIX007581) using prespecified treatment
+  contrasts and a reference-trained plasma age-state axis,
 - loads Mammal40 methylation (OMIX007582) as a guarded validation block, while
   keeping biological sample mapping conservative when only technical IDs are available.
 """
@@ -26,6 +27,7 @@ import pandas as pd
 
 from .config import PipelineConfig, OmixPaths
 from .logging_utils import get_logger
+from .run_provenance import begin_run_manifest, finalize_run_manifest
 
 from .omix_io import (
     load_omix_matrix,
@@ -34,10 +36,16 @@ from .omix_io import (
     find_first_present_column,
     assert_metadata_reasonable,
 )
+from .omix007580 import (
+    OMIX007580_RELEASE_CONTRACT,
+    load_omix007580_anonymous_counts,
+    sha256_file,
+)
 
 from .preprocessing import (
     standardize_metadata_columns,
     log1p_counts,
+    log2_cpm_counts,
     filter_top_variance,
     build_proxy_rejuvenation_score,
 )
@@ -46,13 +54,14 @@ from .clocks import (
     train_transcriptomic_clock,
     predict_biological_age,
 )
+from .reference_clock import (
+    apply_exact_sample_exclusions,
+    frozen_fold_assignment_digest,
+    train_reference_transcriptomic_clock,
+)
 
 from .exosome_effect import (
-    compute_group_effect_by_tissue,
     compare_effect_patterns,
-    estimate_exosome_fraction,
-    estimate_exosome_fraction_with_uncertainty,
-    build_plasma_state_score,
     simple_mediation_bootstrap,
 )
 from .plasma_axis import (
@@ -63,8 +72,10 @@ from .attribution import (
     assign_group_stage_age,
     build_mouse_exosome_metadata,
     build_subset_validation_table,
+    compute_cross_species_response_alignment,
     compute_exosome_alignment_tables,
     compute_mouse_exosome_tissue_effects,
+    load_cross_species_tissue_mapping,
     read_subset_sample_info,
     summarize_mouse_exosome_signatures,
     summarize_multimodal_concordance,
@@ -82,16 +93,19 @@ from .viz import (
 from .rejuvenation import (
     annotate_effect_uncertainty,
     compute_delta_age,
+    summarize_animal_treatment_contrasts_by_tissue,
+    summarize_clustered_treatment_sensitivity,
+    summarize_global_animal_treatment_contrasts,
     summarize_rejuvenation_by_tissue,
-    summarise_global_rejuvenation,
     summarize_tissue_expression_effects,
-    compute_plasma_biomarkers
+    compute_plasma_protein_contrasts,
 )
 from .linkage_audit import (
     audit_primate_plasma_linkage,
     build_estimability_report,
+    load_validated_plasma_linkage_manifest,
 )
-from .reason_codes import annotate_reason_fields
+from .reason_codes import PLASMA_LINKAGE_CONFIDENCE_MISSING, annotate_reason_fields
 
 logger = get_logger(__name__)
 
@@ -113,6 +127,12 @@ PROFILE_SPECS: Dict[str, Dict[str, Any]] = {
         "data_root_relative": Path("data/RAW/data"),
         "bulk_matrix": "OMIX007580-01.txt",
         "bulk_metadata": "OMIX007580-02.csv",
+        "bulk_input_mode": "omix007580_anonymous_counts",
+        "bulk_representation": "log2_cpm",
+        "clock_protocol": "reference_nested_ridge",
+        "clock_excluded_sample_ids": ["58-MF-C-Trachea_4"],
+        "clock_fold_file": "config/primate_clock_folds.csv",
+        "clock_fold_sha256": "666731461817ec5c9e9b9cb3007a62ee328b61a805f0caab2779fc2663bcf98e",
         "plasma_matrix": "OMIX007581-01.csv",
         "plasma_metadata": None,
         "methylation_matrix": "OMIX007582_beta_matrix.csv",
@@ -125,6 +145,12 @@ PROFILE_SPECS: Dict[str, Dict[str, Any]] = {
         "data_root_relative": Path("data/PROCESSED"),
         "bulk_matrix": "OMIX007580_01_example.txt",
         "bulk_metadata": "OMIX007580-02_example.csv",
+        "bulk_input_mode": "feature_indexed",
+        "bulk_representation": "log1p_counts",
+        "clock_protocol": "legacy_all_samples_ridge",
+        "clock_excluded_sample_ids": [],
+        "clock_fold_file": None,
+        "clock_fold_sha256": None,
         "plasma_matrix": "OMIX007581-01_example.csv",
         "plasma_metadata": None,
         "methylation_matrix": "OMIX007582_beta_matrix_example.csv",
@@ -241,16 +267,29 @@ def _evidence_level(
     return 0
 
 
-def _compatibility_exosome_fraction_evidence_level(
-    *,
-    estimable: bool,
-    has_exosome_alignment: bool,
-) -> int:
-    """Keep the legacy cross-species ratio below direct-mediation evidence."""
-    return _evidence_level(
-        estimable=estimable,
-        has_exosome_alignment=has_exosome_alignment,
-    )
+def _causal_exosome_fraction_status() -> Dict[str, Any]:
+    """Return the structured non-identifiability result for causal attribution."""
+    return {
+        "available": True,
+        "estimable": False,
+        "reason": (
+            "A causal exosome-attributable fraction is not identified because whole-cell "
+            "therapy was studied in macaques and exosome therapy in mice, without a "
+            "within-macaque exosome intervention or a validated causal mediator. Quantitative "
+            "response resemblance is reported separately in "
+            "cross_species_response_alignment_summary.csv."
+        ),
+        "n_used": 0,
+        "method": "causal_exosome_fraction_not_identified",
+        "ci_low": np.nan,
+        "ci_high": np.nan,
+        "n_common_tissues": 0,
+        "cells_median_abs": np.nan,
+        "exo_median_abs": np.nan,
+        "ratio": np.nan,
+        "empirical_p_value": np.nan,
+        "evidence_level": 0,
+    }
 
 
 def _contrast_pairs(specs: List[str]) -> List[Tuple[str, str]]:
@@ -632,21 +671,29 @@ def _normalize_pred_output(pred: Any) -> pd.DataFrame:
     raise ValueError("Clock prediction output must be a pandas Series or DataFrame.")
 
 
-def load_plasma_proteomics_csv(path: Path) -> pd.DataFrame:
+def load_plasma_proteomics_csv(
+    path: Path,
+    *,
+    return_annotations: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame]:
     """
     Loads OMIX007581-01-like plasma proteomics wide CSV.
-    Returns matrix with rows=features, cols=samples.
+    Returns matrix with rows=unique protein accessions and cols=samples.
+    Gene symbols are annotations because they are not unique in this release.
     """
     df = pd.read_csv(path)
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Use Gene name if available, else Protein accession, else first col
-    if "Gene name" in df.columns:
-        idx = df["Gene name"].astype(str)
-    elif "Protein accession" in df.columns:
-        idx = df["Protein accession"].astype(str)
+    if "Protein accession" in df.columns:
+        idx = df["Protein accession"].astype("string").str.strip()
+        if idx.isna().any() or idx.eq("").any() or idx.duplicated().any():
+            raise ValueError("Protein accession must be complete and unique in the plasma matrix.")
     else:
-        idx = df.iloc[:, 0].astype(str)
+        idx = pd.Series(
+            [f"plasma_feature_{i:05d}" for i in range(len(df))],
+            index=df.index,
+            dtype="string",
+        )
 
     drop_set = {"Protein accession", "Gene name"}
     sample_cols = [c for c in df.columns if c not in drop_set]
@@ -655,12 +702,29 @@ def load_plasma_proteomics_csv(path: Path) -> pd.DataFrame:
     sample_cols = [c for c in sample_cols if re.match(r"^[A-Za-z]+_\d+$", c)]
 
     mat = df.loc[:, sample_cols].copy()
-    mat.index = idx
+    mat.index = pd.Index(idx.astype(str), name="feature_id")
 
     # Numeric conversion (float32-ish)
     for c in mat.columns:
         mat[c] = pd.to_numeric(mat[c], errors="coerce", downcast="float")
 
+    annotations = pd.DataFrame(
+        {
+            "feature_id": mat.index.astype(str),
+            "protein_accession": (
+                df["Protein accession"].astype("string").str.strip().to_numpy()
+                if "Protein accession" in df.columns
+                else mat.index.astype(str)
+            ),
+            "gene_name": (
+                df["Gene name"].astype("string").str.strip().fillna("").to_numpy()
+                if "Gene name" in df.columns
+                else np.repeat("", len(df))
+            ),
+        }
+    )
+    if return_annotations:
+        return mat, annotations
     return mat
 
 
@@ -701,15 +765,15 @@ def build_plasma_metadata_from_columns(sample_cols: list[str]) -> pd.DataFrame:
 
 def _map_plasma_sample_to_bulk_animal_id(sample_id: str) -> Tuple[Optional[str], str, str, str]:
     """
-    Conservative, deterministic mapping from OMIX007581-style plasma sample IDs
-    to OMIX007580 bulk animal IDs.
+    Candidate mapping from OMIX007581-style plasma aliases to bulk animal IDs.
+    A naming match does not establish cross-modal biological identity.
 
     Group-name semantics are documented in `docs/group_label_crosswalk.md`.
     In brief: public OMIX/BioProject naming strongly supports `V -> O_V`,
     `WT -> O_WT`, and `GES -> O_GES`, but those remain cross-source mappings
     rather than verbatim article labels.
 
-    Supported high-confidence mappings:
+    Supported candidate mappings (excluded from high-confidence inference):
       FV_2   -> F-V-2
       MWT_3  -> M-WT-3
       FGES_1 -> F-GES-1
@@ -737,8 +801,8 @@ def _map_plasma_sample_to_bulk_animal_id(sample_id: str) -> Tuple[Optional[str],
         return (
             animal_id,
             "plasma_code_to_bulk_orig_ident",
-            "high",
-            "deterministic V/WT/GES mapping validated against bulk IDs",
+            "inferred",
+            "V/WT/GES alias match; shared individual numbering awaits author confirmation",
         )
 
     return None, "none", "low", f"group code '{group_code}' not deterministically linkable"
@@ -756,7 +820,11 @@ def clean_plasma_matrix(
     min_sample_non_nan_frac: float = 0.5,
 ) -> pd.DataFrame:
     """
-    Clean + impute plasma proteomics matrix for PCA-based scoring.
+    Apply missingness filters without imputing the source plasma matrix.
+
+    Downstream analyses own their imputation policy. In particular, the
+    reference-trained age-state axis derives imputation values from young and
+    vehicle samples only, while protein contrasts use observed values.
     Rows = proteins/genes, cols = samples.
     """
 
@@ -776,15 +844,6 @@ def clean_plasma_matrix(
 
     if mat.empty:
         raise ValueError("Plasma matrix became empty after missingness filtering.")
-
-    # Median imputation per feature (robust for proteomics)
-    med = mat.median(axis=1)
-    mat = mat.T.fillna(med).T
-
-    # Final safety
-    if mat.isna().any().any():
-        # Edge case: a feature with all NaN after filtering; remove it
-        mat = mat.dropna(axis=0, how="any")
 
     return mat
 
@@ -919,11 +978,25 @@ def load_align_standardize(
     allowed_cap = getattr(cfg, "max_allowed_samples", None) or 5000
     allowed = _get_allowed_samples(meta, sample_col, cap=allowed_cap)
 
-    matrix = load_omix_matrix(
-        omix.matrix,
-        allowed_samples=allowed,
-        dtype="float32",
-    )
+    input_audit = None
+    if cfg.primate_bulk_input_mode == "omix007580_anonymous_counts":
+        if sha256_file(omix.metadata) != OMIX007580_RELEASE_CONTRACT.metadata_sha256:
+            raise ValueError(
+                "OMIX007580 metadata checksum changed; the curation contract is version-specific"
+            )
+        matrix, input_audit = load_omix007580_anonymous_counts(
+            omix.matrix,
+            expected_sample_ids=allowed,
+            dtype="float32",
+        )
+    elif cfg.primate_bulk_input_mode == "feature_indexed":
+        matrix = load_omix_matrix(
+            omix.matrix,
+            allowed_samples=allowed,
+            dtype="float32",
+        )
+    else:
+        raise ValueError(f"Unsupported primate bulk input mode: {cfg.primate_bulk_input_mode}")
 
     hard_guardrail_matrix_and_meta(matrix, meta, context=str(omix.matrix))
 
@@ -975,7 +1048,20 @@ def load_align_standardize(
         logger.info("Matrix shape before variance filter: %s", matrix.shape)
         matrix = filter_top_variance(matrix, cfg.n_top_features_expr)
 
-    expr_log = log1p_counts(matrix, assume_counts=assume_counts)
+    if cfg.primate_bulk_representation == "log2_cpm":
+        if not assume_counts:
+            raise ValueError("log2_cpm representation requires count-like input")
+        expr_log = log2_cpm_counts(matrix)
+    elif cfg.primate_bulk_representation == "log1p_counts":
+        expr_log = log1p_counts(matrix, assume_counts=assume_counts)
+        expr_log.attrs.update(matrix.attrs)
+        expr_log.attrs["representation"] = "log1p_counts"
+    else:
+        raise ValueError(
+            f"Unsupported primate bulk representation: {cfg.primate_bulk_representation}"
+        )
+    if input_audit is not None:
+        expr_log.attrs["input_audit"] = input_audit.to_record()
     return expr_log, meta
 
 
@@ -1104,125 +1190,99 @@ def run_sensitivity_analyses(
 ) -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
 
-    ctrl_variants = _control_set_variants(list(cfg.primate_control_labels or []))
-    for name, ctrl_labels in ctrl_variants.items():
-        eff = summarise_global_rejuvenation(
+    try:
+        global_contrasts = summarize_global_animal_treatment_contrasts(
             prim_meta,
+            tissue_col=cfg.tissue_col_candidates[0],
             group_col=cfg.group_col_candidates[0],
+            animal_col="animal_id",
+            sex_col="sex",
             value_col="delta_age",
-            control_labels=ctrl_labels,
-            treated_labels=[cfg.primate_treated_label],
+            contrasts=cfg.primate_treatment_contrasts,
+            primary_contrast=cfg.primate_primary_contrast,
             min_per_group=max(2, cfg.min_samples_per_group_for_rejuv),
             n_bootstrap=max(500, cfg.n_bootstrap // 2),
+            n_permutations=max(500, cfg.treatment_n_permutations // 2),
             random_state=cfg.random_state,
         )
-        if eff is None:
+        for row in global_contrasts.to_dict(orient="records"):
+            effect = float(row.get("mean_effect", np.nan))
             rows.append(
                 {
-                    "analysis_type": "control_set",
-                    "scenario": name,
-                    "effect": np.nan,
-                    "direction": "NA",
-                    "available": False,
-                    "estimable": False,
-                    "reason": "Insufficient samples for this control-set definition.",
-                    "n_used": 0,
-                    "method": "global_delta_age_bootstrap",
-                    "ci_low": np.nan,
-                    "ci_high": np.nan,
-                    "evidence_level": 0,
+                    "analysis_type": "animal_level_treatment_contrast",
+                    "scenario": row.get("contrast", "NA"),
+                    "effect": effect,
+                    "direction": "negative" if effect < 0 else ("positive" if effect > 0 else "zero"),
+                    "available": bool(row.get("available", True)),
+                    "estimable": bool(row.get("estimable", True)),
+                    "reason": row.get("reason", ""),
+                    "n_used": int(row.get("n_used", 0)),
+                    "method": row.get("method", "animal_aggregated_global_bootstrap_permutation"),
+                    "ci_low": float(row.get("ci_low", np.nan)),
+                    "ci_high": float(row.get("ci_high", np.nan)),
+                    "p_value": float(row.get("p_value", np.nan)),
+                    "evidence_level": int(row.get("evidence_level", 1)),
                 }
             )
-            continue
-
-        n_used = int(eff.get("n_ctrl", 0)) + int(eff.get("n_trt", 0))
-        effect = float(eff.get("effect_median", np.nan))
+    except Exception as exc:
         rows.append(
             {
-                "analysis_type": "control_set",
-                "scenario": name,
-                "effect": effect,
-                "direction": "negative" if effect < 0 else ("positive" if effect > 0 else "zero"),
-                "available": True,
-                "estimable": True,
-                "reason": "",
-                "n_used": n_used,
-                "method": "global_delta_age_bootstrap",
-                "ci_low": float(eff.get("ci_low", np.nan)),
-                "ci_high": float(eff.get("ci_high", np.nan)),
-                "evidence_level": 1,
-            }
-        )
-
-    # Explicit robustness summary for control-set direction consistency.
-    ctrl_df = pd.DataFrame([r for r in rows if r.get("analysis_type") == "control_set" and bool(r.get("estimable"))])
-    if not ctrl_df.empty:
-        dirs = [d for d in ctrl_df["direction"].tolist() if d in {"positive", "negative"}]
-        stable = bool(len(dirs) > 0 and len(set(dirs)) == 1)
-        if stable:
-            consensus_direction = dirs[0]
-            consensus_reason = ""
-            consensus_level = 1
-        else:
-            consensus_direction = "mixed"
-            consensus_reason = (
-                "Direction flips across control-set definitions; treatment direction is not robust."
-            )
-            consensus_level = 0
-            for i, r in enumerate(rows):
-                if r.get("analysis_type") == "control_set" and bool(r.get("estimable")):
-                    rows[i]["reason"] = consensus_reason
-                    rows[i]["evidence_level"] = 0
-
-        rows.append(
-            {
-                "analysis_type": "control_set_summary",
-                "scenario": "consensus",
-                "effect": float(ctrl_df["effect"].median()) if "effect" in ctrl_df.columns else np.nan,
-                "direction": consensus_direction,
-                "available": True,
-                "estimable": True,
-                "reason": consensus_reason,
-                "n_used": int(ctrl_df["n_used"].sum()),
-                "method": "control_set_direction_consistency",
+                "analysis_type": "animal_level_treatment_contrast",
+                "scenario": cfg.primate_primary_contrast,
+                "effect": np.nan,
+                "direction": "NA",
+                "available": False,
+                "estimable": False,
+                "reason": f"Animal-level treatment contrast sensitivity unavailable: {exc}",
+                "n_used": 0,
+                "method": "animal_aggregated_global_bootstrap_permutation",
                 "ci_low": np.nan,
                 "ci_high": np.nan,
-                "evidence_level": consensus_level,
+                "evidence_level": 0,
             }
         )
 
     thresholds = sorted(set(int(x) for x in (cfg.sensitivity_top_feature_thresholds or [])))
     plasma_groups = set(prim_plasma_meta["group"].astype(str))
     plasma_treated = _canonical_group_label(cfg.primate_treated_label)
-    plasma_ctrl = [
-        g
-        for g in {_canonical_group_label(x) for x in (cfg.primate_control_labels or [])}
-        if g in plasma_groups and g != plasma_treated
-    ]
-    if not plasma_ctrl:
-        plasma_ctrl = [g for g in plasma_groups if g != plasma_treated]
+    plasma_vehicle = _canonical_group_label(getattr(cfg, "primate_vehicle_label", "O_V"))
+    plasma_ctrl = [plasma_vehicle] if plasma_vehicle in plasma_groups else []
     for top_n in thresholds:
         try:
-            score = build_plasma_state_score(
-                plasma_matrix=prim_plasma_expr,
+            if not plasma_ctrl:
+                raise ValueError("prespecified vehicle plasma group is unavailable")
+            score_table, _, axis_summary = build_oriented_plasma_aging_axis(
+                plasma_expr=prim_plasma_expr,
+                plasma_meta=prim_plasma_meta,
+                young_groups=getattr(cfg, "plasma_axis_young_labels", ["Y"]),
+                old_control_groups=[plasma_vehicle],
+                treated_groups=[plasma_treated],
                 n_top_proteins=max(5, int(top_n)),
-                score_name="plasma_state_score",
+                min_group_samples=int(getattr(cfg, "plasma_axis_min_group_samples", 2)),
+                min_non_nan_frac=float(getattr(cfg, "plasma_axis_min_non_nan_frac", 0.8)),
+                n_bootstrap=0,
+                n_permutations=0,
+                random_state=int(getattr(cfg, "random_state", 42)),
             )
-            pm = prim_plasma_meta.set_index("sample_id").copy()
-            common = pm.index.intersection(score.index)
-            pm = pm.loc[common]
-            score_common = score.loc[common].astype(float)
-            trt_raw = score_common.loc[pm["group"].astype(str) == plasma_treated]
-            ctr_raw = score_common.loc[pm["group"].isin(plasma_ctrl)]
-            sd = float(score_common.std(ddof=0))
-            if np.isfinite(sd) and sd > 0:
-                score_z = (score_common - float(score_common.mean())) / sd
-            else:
-                score_z = score_common * 0.0
-            pm["plasma_state_score"] = score_z
-
-            trt = pm.loc[pm["group"].astype(str) == plasma_treated, "plasma_state_score"].dropna()
-            ctr = pm.loc[pm["group"].isin(plasma_ctrl), "plasma_state_score"].dropna()
+            if axis_summary.empty or not bool(axis_summary.iloc[0].get("estimable", False)):
+                raise ValueError("reference-trained plasma age-state axis was not estimable")
+            pm = score_table.set_index("sample_id").copy()
+            trt = pm.loc[
+                pm["group_clean"].astype(str).eq(plasma_treated),
+                "plasma_age_axis_score",
+            ].dropna()
+            ctr = pm.loc[
+                pm["group_clean"].astype(str).isin(plasma_ctrl),
+                "plasma_age_axis_score",
+            ].dropna()
+            trt_raw = pm.loc[
+                pm["group_clean"].astype(str).eq(plasma_treated),
+                "raw_pc1_score",
+            ].dropna()
+            ctr_raw = pm.loc[
+                pm["group_clean"].astype(str).isin(plasma_ctrl),
+                "raw_pc1_score",
+            ].dropna()
             if len(trt) < 2 or len(ctr) < 2:
                 raise ValueError("insufficient treated/control plasma samples")
 
@@ -1240,7 +1300,7 @@ def run_sensitivity_analyses(
                     "estimable": True,
                     "reason": "",
                     "n_used": int(len(trt) + len(ctr)),
-                    "method": "plasma_state_median_diff_zscore",
+                    "method": "reference_trained_plasma_age_axis_top_feature_sensitivity",
                     "ci_low": np.nan,
                     "ci_high": np.nan,
                     "evidence_level": 1,
@@ -1309,6 +1369,11 @@ def run(cfg: PipelineConfig) -> None:
 
     # ---- Primate bulk (tissues) ----
     prim_expr, prim_meta = load_align_standardize(cfg.primate_bulk, cfg, assume_counts=True)
+    bulk_input_audit = prim_expr.attrs.get("input_audit")
+    if bulk_input_audit is not None:
+        bulk_input_audit_path = cfg.results_dir / "omix007580_input_audit.csv"
+        pd.DataFrame([bulk_input_audit]).to_csv(bulk_input_audit_path, index=False)
+        logger.info("Saved OMIX007580 input audit to: %s", bulk_input_audit_path)
     # Tissue-level bulk effects are computed later, after rejuvenation_score exists.
     prim_tissue_effects = None
     prim_meth_expr, prim_meth_meta = None, None
@@ -1351,16 +1416,64 @@ def run(cfg: PipelineConfig) -> None:
         pd.to_numeric(prim_meta["age"], errors="coerce").notna().mean(),
     )
 
-    # 1) Train a final transcriptomic clock on all samples
-    prim_clock, prim_cv_pred_df, clock_metrics = train_transcriptomic_clock(
+    clock_exclusions_path = cfg.results_dir / "clock_exclusions_primates.csv"
+    prim_expr, prim_meta, clock_exclusions = apply_exact_sample_exclusions(
         prim_expr,
         prim_meta,
-        age_col="age",
-        model=getattr(cfg, "clock_model", None),
-        n_splits=getattr(cfg, "clock_cv_folds", 5),
-        random_state=getattr(cfg, "random_state", getattr(cfg, "random_seed", 42)),
-        cv_group_col="animal_id",
+        getattr(cfg, "clock_excluded_sample_ids", []),
     )
+    clock_exclusions.to_csv(clock_exclusions_path, index=False)
+    logger.info("Saved transcriptomic-clock exclusion ledger to: %s", clock_exclusions_path)
+
+    clock_protocol = getattr(cfg, "clock_protocol", "legacy_all_samples_ridge")
+    if clock_protocol == "reference_nested_ridge":
+        fold_path = getattr(cfg, "clock_fold_assignments", None)
+        fold_sha256 = getattr(cfg, "clock_fold_assignments_sha256", None)
+        if fold_path is None or fold_sha256 is None:
+            raise ValueError("Reference clock requires a frozen fold-assignment contract")
+        frozen_clock_folds = pd.read_csv(fold_path)
+        if frozen_fold_assignment_digest(frozen_clock_folds) != fold_sha256:
+            raise ValueError("Frozen primate clock fold-assignment content changed")
+        reference_run = train_reference_transcriptomic_clock(
+            prim_expr,
+            prim_meta,
+            reference_groups=getattr(cfg, "clock_reference_groups", []),
+            ridge_alphas=getattr(cfg, "clock_ridge_alphas", []),
+            outer_folds=getattr(cfg, "clock_cv_folds", 5),
+            inner_folds=getattr(cfg, "clock_inner_folds", 3),
+            inner_seed=getattr(cfg, "clock_inner_seed", 20260917),
+            diagnostic_seeds=getattr(cfg, "clock_diagnostic_seeds", [17, 29, 43]),
+            frozen_fold_assignments=frozen_clock_folds,
+        )
+        prim_clock = reference_run.clock
+        prim_cv_pred_df = reference_run.primary_predictions
+        clock_metrics = reference_run.metrics
+        reference_run.all_predictions.to_csv(
+            cfg.results_dir / "clock_cv_predictions_primates.csv",
+            index=False,
+        )
+        reference_run.fold_audit.to_csv(
+            cfg.results_dir / "clock_fit_audit_primates.csv",
+            index=False,
+        )
+        reference_run.hyperparameter_audit.to_csv(
+            cfg.results_dir / "clock_hyperparameter_audit_primates.csv",
+            index=False,
+        )
+        clock_method = "controls_only_nested_grouped_ridge"
+    elif clock_protocol == "legacy_all_samples_ridge":
+        prim_clock, prim_cv_pred_df, clock_metrics = train_transcriptomic_clock(
+            prim_expr,
+            prim_meta,
+            age_col="age",
+            model=getattr(cfg, "clock_model", None),
+            n_splits=getattr(cfg, "clock_cv_folds", 5),
+            random_state=getattr(cfg, "random_state", getattr(cfg, "random_seed", 42)),
+            cv_group_col="animal_id",
+        )
+        clock_method = "legacy_all_samples_transcriptomic_clock_cv"
+    else:
+        raise ValueError(f"Unsupported transcriptomic-clock protocol: {clock_protocol}")
 
     logger.info("Transcriptomic clock metrics (train CV): %s", clock_metrics)
 
@@ -1373,7 +1486,7 @@ def run(cfg: PipelineConfig) -> None:
         estimable=True,
         reason="",
         n_used=int(clock_metrics.get("n_samples", 0)),
-        method="transcriptomic_clock_cv",
+        method=clock_method,
         evidence_level=1,
     )
     clock_df.to_csv(clock_metrics_path, index=False)
@@ -1440,31 +1553,57 @@ def run(cfg: PipelineConfig) -> None:
         out_col="delta_age",
     )
 
-    # Global summary
-    global_rejuv = summarise_global_rejuvenation(
-        prim_meta,
-        group_col=cfg.group_col_candidates[0],
-        value_col="delta_age",
-        control_labels=cfg.primate_control_labels,
-        treated_labels=[cfg.primate_treated_label],
-        min_per_group=cfg.min_samples_for_mediation,
-        n_bootstrap=cfg.n_bootstrap,
-        random_state=cfg.random_state,
-    )
-
-    logger.info("Global rejuvenation summary: %s", global_rejuv)
-
-    # Summary by tissue
+    # Prespecified animal-level treatment contrasts. The global summary is
+    # secondary because it averages repeated tissues within each animal.
     tissue_col = cfg.tissue_col_candidates[0]
-    rejuv_by_tissue = summarize_rejuvenation_by_tissue(
+    treatment_contrasts = list(cfg.primate_treatment_contrasts or [])
+    global_rejuv = summarize_global_animal_treatment_contrasts(
         prim_meta,
         tissue_col=tissue_col,
         group_col=cfg.group_col_candidates[0],
+        animal_col="animal_id",
+        sex_col="sex",
         value_col="delta_age",
-        control_labels=cfg.primate_control_labels,
-        treated_labels=[cfg.primate_treated_label],
-        min_per_group=max(2, cfg.min_samples_for_mediation // 5),
+        contrasts=treatment_contrasts,
+        primary_contrast=cfg.primate_primary_contrast,
+        min_per_group=max(2, cfg.min_samples_per_group_for_rejuv),
         n_bootstrap=cfg.n_bootstrap,
+        n_permutations=cfg.treatment_n_permutations,
+        random_state=cfg.random_state,
+    )
+    if global_rejuv.empty:
+        global_rejuv = _result_stub(
+            reason="No global animal-level treatment contrasts passed minimum support.",
+            method="animal_aggregated_global_bootstrap_permutation",
+            extra={
+                "contrast": cfg.primate_primary_contrast,
+                "scope": "global_secondary",
+                "mean_effect": np.nan,
+                "p_value": np.nan,
+            },
+        )
+    global_rejuv = _ensure_standard_schema(
+        global_rejuv,
+        method="animal_aggregated_global_bootstrap_permutation",
+    )
+    global_rejuv_path = cfg.results_dir / "global_rejuvenation_summary.csv"
+    global_rejuv.to_csv(global_rejuv_path, index=False)
+    logger.info("Saved secondary animal-level global summary to: %s", global_rejuv_path)
+
+    # Tissue-wise effects use one biological animal per row and retain all
+    # three prespecified contrasts. Public figures select the primary contrast.
+    rejuv_by_tissue = summarize_animal_treatment_contrasts_by_tissue(
+        prim_meta,
+        tissue_col=tissue_col,
+        group_col=cfg.group_col_candidates[0],
+        animal_col="animal_id",
+        sex_col="sex",
+        value_col="delta_age",
+        contrasts=treatment_contrasts,
+        primary_contrast=cfg.primate_primary_contrast,
+        min_per_group=max(2, cfg.min_samples_per_group_for_rejuv),
+        n_bootstrap=cfg.n_bootstrap,
+        n_permutations=cfg.treatment_n_permutations,
         random_state=cfg.random_state,
     )
 
@@ -1474,34 +1613,65 @@ def run(cfg: PipelineConfig) -> None:
             [
                 {
                     "tissue": "NA",
+                    "contrast": cfg.primate_primary_contrast,
+                    "is_primary": True,
                     "n_ctrl": 0,
                     "n_trt": 0,
-                    "effect_median": np.nan,
+                    "mean_effect": np.nan,
                     "ci_low": np.nan,
                     "ci_high": np.nan,
+                    "ci_crosses_zero": False,
+                    "p_value_adjusted": np.nan,
                     "available": False,
                     "estimable": False,
                     "reason": "No tissue-level rejuvenation estimates passed filters.",
                     "n_used": 0,
-                    "method": "delta_age_group_bootstrap",
+                    "method": "animal_mean_difference_bootstrap_permutation_by_tissue",
                     "evidence_level": 0,
                 }
             ]
         )
-    else:
-        rejuv_by_tissue["n_used"] = (
-            pd.to_numeric(rejuv_by_tissue.get("n_ctrl", 0), errors="coerce").fillna(0).astype(int)
-            + pd.to_numeric(rejuv_by_tissue.get("n_trt", 0), errors="coerce").fillna(0).astype(int)
-        )
-        rejuv_by_tissue["method"] = "delta_age_group_bootstrap"
-        rejuv_by_tissue["available"] = True
-        rejuv_by_tissue["estimable"] = True
-        rejuv_by_tissue["reason"] = ""
-        rejuv_by_tissue["evidence_level"] = 1
-    rejuv_by_tissue = annotate_effect_uncertainty(rejuv_by_tissue, effect_col="effect_median")
-    rejuv_by_tissue = _ensure_standard_schema(rejuv_by_tissue, method="delta_age_group_bootstrap")
+    rejuv_by_tissue = _ensure_standard_schema(
+        rejuv_by_tissue,
+        method="animal_mean_difference_bootstrap_permutation_by_tissue",
+    )
     rejuv_by_tissue.to_csv(rejuv_by_tissue_path, index=False)
     logger.info("Saved tissue-level rejuvenation summary to: %s", rejuv_by_tissue_path)
+
+    primary_rejuv_by_tissue = rejuv_by_tissue.loc[
+        rejuv_by_tissue.get("is_primary", pd.Series(False, index=rejuv_by_tissue.index)).astype(bool)
+        & rejuv_by_tissue["estimable"].astype(bool)
+    ].copy()
+
+    clustered_sensitivity = summarize_clustered_treatment_sensitivity(
+        prim_meta,
+        tissue_col=tissue_col,
+        group_col=cfg.group_col_candidates[0],
+        animal_col="animal_id",
+        sex_col="sex",
+        age_col="age",
+        value_col="delta_age",
+        contrasts=treatment_contrasts,
+        primary_contrast=cfg.primate_primary_contrast,
+        min_animals_per_group=max(2, cfg.min_samples_per_group_for_rejuv),
+    )
+    if clustered_sensitivity.empty:
+        clustered_sensitivity = _result_stub(
+            reason="No tissue-adjusted animal-clustered sensitivity contrast was estimable.",
+            method="ols_tissue_age_sex_animal_clustered",
+            extra={
+                "contrast": cfg.primate_primary_contrast,
+                "mean_effect": np.nan,
+                "cluster_unit": "animal_id",
+            },
+        )
+    clustered_sensitivity = _ensure_standard_schema(
+        clustered_sensitivity,
+        method="ols_tissue_age_sex_animal_clustered",
+    )
+    clustered_sensitivity_path = cfg.results_dir / "global_rejuvenation_clustered_sensitivity.csv"
+    clustered_sensitivity.to_csv(clustered_sensitivity_path, index=False)
+    logger.info("Saved animal-clustered sensitivity to: %s", clustered_sensitivity_path)
 
     # ---- Tissue-level expression effects (uses rejuvenation_score) ----
     tissue_expr_effects = summarize_tissue_expression_effects(
@@ -1509,7 +1679,7 @@ def run(cfg: PipelineConfig) -> None:
         prim_meta,
         tissue_col=cfg.tissue_col_candidates[0],
         group_col=cfg.group_col_candidates[0],
-        control_labels=cfg.primate_control_labels,
+        control_labels=[cfg.primate_vehicle_label],
         treated_labels=[cfg.primate_treated_label],
         outcome_col="delta_age",
         min_per_group=cfg.min_samples_per_group_for_rejuv,
@@ -1555,10 +1725,10 @@ def run(cfg: PipelineConfig) -> None:
     tissue_expr_effects.to_csv(tissue_expr_path, index=False)
     logger.info("Saved tissue expression effects to: %s", tissue_expr_path)
 
-    # ---- Tissue-level effects for downstream exosome comparison ----
-    if not tissue_expr_effects.empty and tissue_expr_effects["estimable"].astype(bool).any():
+    # ---- Primary tissue effects for downstream exosome comparison ----
+    if not primary_rejuv_by_tissue.empty:
         prim_tissue_effects = _table_to_effect_index(
-            tissue_expr_effects,
+            primary_rejuv_by_tissue,
             tissue_col="tissue",
             effect_col="mean_effect",
             treated_col="n_trt",
@@ -1566,39 +1736,6 @@ def run(cfg: PipelineConfig) -> None:
         )
     else:
         prim_tissue_effects = pd.DataFrame(columns=["mean_effect", "n_treated", "n_control"])
-
-    # Backward-compatible fallback to simple mean-difference when adjusted model is unavailable.
-    if prim_tissue_effects.empty:
-        try:
-            prim_tissue_effects = call_with_supported_kwargs(
-                compute_group_effect_by_tissue,
-                expr=prim_expr,
-                matrix=prim_expr,
-                data=prim_expr,
-                X=prim_expr,
-                meta=prim_meta,
-                metadata=prim_meta,
-                meta_df=prim_meta,
-                outcome_col="rejuvenation_score",
-                y_col="rejuvenation_score",
-                group_col="group",
-                treated_label=cfg.primate_treated_label,
-                control_label=getattr(cfg, "control_label", None),
-                control_labels=getattr(cfg, "primate_control_labels", None) or [cfg.control_label],
-                tissue_col="tissue",
-                top_k=cfg.top_genes_per_tissue,
-                top_n=cfg.top_genes_per_tissue,
-                n_top=cfg.top_genes_per_tissue,
-            )
-            logger.warning(
-                "Using fallback mean-difference tissue effects because adjusted effects were unavailable."
-            )
-        except Exception as e:
-            logger.warning(
-                "No valid tissue effects available for downstream exosome comparison: %s",
-                str(e),
-            )
-            prim_tissue_effects = pd.DataFrame(columns=["mean_effect", "n_treated", "n_control"])
 
     # ---- Mouse exosome mechanism-support block (OMIX009283) ----
     mouse_block_reason = (
@@ -1616,6 +1753,7 @@ def run(cfg: PipelineConfig) -> None:
         method="mouse_exosome_signature_summary",
         extra={"contrast": "NA"},
     )
+    mouse_sample_outcomes = pd.DataFrame()
     if getattr(cfg, "enable_mouse_exosome_block", False) and getattr(cfg, "mouse_exosome_bulk", None) is not None:
         try:
             mouse_raw = load_omix_matrix(cfg.mouse_exosome_bulk.matrix, dtype="float32")
@@ -1626,7 +1764,7 @@ def run(cfg: PipelineConfig) -> None:
                 ["sample_id"],
             )
             mouse_expr = log1p_counts(mouse_raw, assume_counts=True)
-            mouse_exosome_effects = compute_mouse_exosome_tissue_effects(
+            mouse_exosome_effects, mouse_sample_outcomes = compute_mouse_exosome_tissue_effects(
                 mouse_expr,
                 mouse_meta,
                 reference_arms=getattr(cfg, "mouse_reference_arms", ["Baseline"]),
@@ -1637,6 +1775,7 @@ def run(cfg: PipelineConfig) -> None:
                 n_bootstrap=int(getattr(cfg, "mouse_tissue_bootstrap", 1000)),
                 n_permutations=int(getattr(cfg, "mouse_tissue_permutations", 1000)),
                 random_state=int(getattr(cfg, "random_state", getattr(cfg, "random_seed", 42))),
+                return_sample_outcomes=True,
             )
             mouse_exosome_effects = _ensure_standard_schema(
                 mouse_exosome_effects,
@@ -1746,7 +1885,7 @@ def run(cfg: PipelineConfig) -> None:
                 tissue_col="tissue",
                 group_col="group",
                 value_col="delta_age",
-                control_labels=cfg.primate_control_labels,
+                control_labels=[cfg.primate_vehicle_label],
                 treated_labels=[cfg.primate_treated_label],
                 min_per_group=max(2, cfg.min_samples_per_group_for_rejuv),
                 n_bootstrap=max(500, cfg.n_bootstrap // 2),
@@ -1778,7 +1917,7 @@ def run(cfg: PipelineConfig) -> None:
 
             multimodal_concordance = _ensure_standard_schema(
                 summarize_multimodal_concordance(
-                    rejuv_by_tissue.loc[rejuv_by_tissue["estimable"].astype(bool)],
+                    primary_rejuv_by_tissue,
                     methylation_rejuv.loc[methylation_rejuv["estimable"].astype(bool)],
                     min_common_tissues=int(getattr(cfg, "methylation_min_common_tissues", 3)),
                     n_bootstrap=int(getattr(cfg, "n_bootstrap", 2000)),
@@ -1837,7 +1976,7 @@ def run(cfg: PipelineConfig) -> None:
                         "O_WT": "O_WT",
                         "O_GES": "O_GES",
                     },
-                    bulk_effects=rejuv_by_tissue,
+                    bulk_effects=primary_rejuv_by_tissue,
                 ),
                 method="subset_sample_info_audit",
             )
@@ -1865,7 +2004,7 @@ def run(cfg: PipelineConfig) -> None:
                         "A4_WTC": "O_WT",
                         "A4_SRC": "O_GES",
                     },
-                    bulk_effects=rejuv_by_tissue,
+                    bulk_effects=primary_rejuv_by_tissue,
                 ),
                 method="subset_sample_info_audit",
             )
@@ -1896,7 +2035,10 @@ def run(cfg: PipelineConfig) -> None:
     else:
         plasma_file = plasma_path
 
-    prim_plasma_expr = load_plasma_proteomics_csv(plasma_file)
+    prim_plasma_expr, plasma_feature_annotations = load_plasma_proteomics_csv(
+        plasma_file,
+        return_annotations=True,
+    )
     prim_plasma_meta = build_plasma_metadata_from_columns(list(prim_plasma_expr.columns))
     prim_plasma_expr = clean_plasma_matrix(
         prim_plasma_expr,
@@ -1936,17 +2078,22 @@ def run(cfg: PipelineConfig) -> None:
                     .str.strip()
                     .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "<NA>": pd.NA})
                 )
-                tmp = tmp.dropna(subset=["sample_id", "animal_id_metadata"]).drop_duplicates("sample_id")
+                tmp = tmp.dropna(subset=["sample_id", "animal_id_metadata"])
+                if tmp["sample_id"].duplicated().any():
+                    raise ValueError(
+                        "Optional OMIX007581 metadata contains duplicate sample_id values; "
+                        "candidate linkage was ignored."
+                    )
 
                 prim_plasma_meta = prim_plasma_meta.merge(tmp, on="sample_id", how="left")
                 meta_mask = prim_plasma_meta["animal_id_metadata"].notna()
                 if meta_mask.any():
                     prim_plasma_meta.loc[meta_mask, "animal_id"] = prim_plasma_meta.loc[meta_mask, "animal_id_metadata"]
-                    prim_plasma_meta.loc[meta_mask, "animal_id_source"] = "metadata"
-                    prim_plasma_meta.loc[meta_mask, "animal_id_confidence"] = "metadata"
-                    prim_plasma_meta.loc[meta_mask, "mapping_rule"] = "metadata_sample_id_match"
+                    prim_plasma_meta.loc[meta_mask, "animal_id_source"] = "unverified_metadata"
+                    prim_plasma_meta.loc[meta_mask, "animal_id_confidence"] = "unverified_metadata"
+                    prim_plasma_meta.loc[meta_mask, "mapping_rule"] = "unverified_metadata_sample_id_match"
                     prim_plasma_meta.loc[meta_mask, "mapping_reason"] = (
-                        "mapped from optional OMIX007581 metadata"
+                        "Candidate from optional OMIX007581 metadata; not validated biological identity"
                     )
                 prim_plasma_meta = prim_plasma_meta.drop(columns=["animal_id_metadata"], errors="ignore")
 
@@ -1991,6 +2138,77 @@ def run(cfg: PipelineConfig) -> None:
             prim_plasma_meta.at[idx, "mapping_rule"] = mapping_rule
             prim_plasma_meta.at[idx, "mapping_reason"] = mapping_reason
 
+    for column in ("linkage_evidence_source", "linkage_manifest_sha256"):
+        if column not in prim_plasma_meta.columns:
+            prim_plasma_meta[column] = pd.NA
+
+    linkage_manifest_path = getattr(cfg, "plasma_linkage_manifest", None)
+    linkage_manifest_sha256 = getattr(cfg, "plasma_linkage_manifest_sha256", None)
+    linkage_manifest_reason = "No validated plasma linkage manifest was configured."
+    linkage_manifest_accepted = False
+    n_validated_manifest_links = 0
+    observed_manifest_sha256 = ""
+    if linkage_manifest_path is not None:
+        try:
+            validated_links = load_validated_plasma_linkage_manifest(
+                linkage_manifest_path,
+                expected_sha256=linkage_manifest_sha256,
+                plasma_meta=prim_plasma_meta,
+                primate_meta=prim_meta,
+            )
+            validated_by_sample = validated_links.set_index("sample_id")
+            validated_mask = prim_plasma_meta["sample_id"].isin(validated_by_sample.index)
+            for target, source in {
+                "animal_id": "animal_id",
+                "animal_id_source": "animal_id_source",
+                "animal_id_confidence": "animal_id_confidence",
+                "mapping_rule": "mapping_rule",
+                "mapping_reason": "mapping_reason",
+                "linkage_evidence_source": "evidence_source",
+                "linkage_manifest_sha256": "linkage_manifest_sha256",
+            }.items():
+                prim_plasma_meta.loc[validated_mask, target] = prim_plasma_meta.loc[
+                    validated_mask, "sample_id"
+                ].map(validated_by_sample[source])
+            linkage_manifest_accepted = True
+            n_validated_manifest_links = int(len(validated_links))
+            observed_manifest_sha256 = str(
+                validated_links["linkage_manifest_sha256"].iloc[0]
+            )
+            linkage_manifest_reason = ""
+        except Exception as exc:
+            linkage_manifest_reason = f"Validated plasma linkage manifest rejected: {exc}"
+            logger.warning("%s", linkage_manifest_reason)
+
+    linkage_manifest_audit = _ensure_standard_schema(
+        pd.DataFrame(
+            [{
+                "manifest_configured": linkage_manifest_path is not None,
+                "manifest_accepted": linkage_manifest_accepted,
+                "manifest_name": (
+                    Path(linkage_manifest_path).name
+                    if linkage_manifest_path is not None
+                    else ""
+                ),
+                "expected_sha256": str(linkage_manifest_sha256 or ""),
+                "observed_sha256": observed_manifest_sha256,
+                "n_validated_links": n_validated_manifest_links,
+            }]
+        ),
+        available=linkage_manifest_path is not None,
+        estimable=linkage_manifest_accepted,
+        reason=linkage_manifest_reason,
+        reason_code=(
+            None if linkage_manifest_accepted else PLASMA_LINKAGE_CONFIDENCE_MISSING
+        ),
+        n_used=n_validated_manifest_links,
+        method="validated_plasma_linkage_manifest_contract",
+        evidence_level=2 if linkage_manifest_accepted else 0,
+    )
+    linkage_manifest_audit_path = cfg.results_dir / "plasma_linkage_manifest_audit.csv"
+    linkage_manifest_audit.to_csv(linkage_manifest_audit_path, index=False)
+    logger.info("Saved plasma linkage manifest audit to: %s", linkage_manifest_audit_path)
+
     # Validate candidate animal_id against known bulk animal IDs.
     if bulk_valid_ids:
         is_mapped = prim_plasma_meta["animal_id"].notna()
@@ -2011,7 +2229,9 @@ def run(cfg: PipelineConfig) -> None:
             )
 
     # Persist explicit mapping table for transparency and downstream audits.
-    high_conf_values = tuple(getattr(cfg, "linkage_high_conf_values", ("high", "metadata", "metadata_exact")))
+    high_conf_values = tuple(
+        getattr(cfg, "linkage_high_conf_values", ("high", "metadata_exact"))
+    )
     high_conf_set = {str(x).strip().lower() for x in high_conf_values}
     map_df = prim_plasma_meta.copy()
     map_df["valid_in_bulk"] = (
@@ -2034,6 +2254,8 @@ def run(cfg: PipelineConfig) -> None:
         "animal_id_confidence",
         "mapping_rule",
         "mapping_reason",
+        "linkage_evidence_source",
+        "linkage_manifest_sha256",
         "valid_in_bulk",
         "high_conf_link",
     ]
@@ -2051,7 +2273,7 @@ def run(cfg: PipelineConfig) -> None:
             else "No high-confidence plasma-to-animal links could be established."
         ),
         n_used=int(len(map_df)),
-        method="plasma_sample_id_deterministic_linkage",
+        method="plasma_linkage_evidence_mapping",
         evidence_level=2 if bool(map_df["high_conf_link"].any()) else 0,
     )
     plasma_map_path = cfg.results_dir / "plasma_to_animal_map.csv"
@@ -2070,6 +2292,7 @@ def run(cfg: PipelineConfig) -> None:
     collision_count = int(mapped_high_conf_valid_ids.duplicated().sum())
     n_plasma_total = int(len(prim_plasma_meta))
     n_mapped_valid = int(mapped_valid_ids.nunique())
+    n_confirmed_valid = int(mapped_high_conf_valid_ids.nunique())
     linkage_qc = pd.DataFrame(
         [
             {
@@ -2086,10 +2309,10 @@ def run(cfg: PipelineConfig) -> None:
     linkage_qc = _ensure_standard_schema(
         linkage_qc,
         available=True,
-        estimable=bool(n_mapped_valid > 0 and collision_count == 0),
+        estimable=bool(n_confirmed_valid > 0 and collision_count == 0),
         reason=(
-            "No plasma samples could be linked to bulk animal IDs."
-            if n_mapped_valid <= 0
+            "No high-confidence plasma-to-animal links could be established; alias matches remain candidates."
+            if n_confirmed_valid <= 0
             else (
                 f"Detected {collision_count} duplicate high-confidence plasma-to-animal "
                 "mapping collision(s)."
@@ -2099,18 +2322,14 @@ def run(cfg: PipelineConfig) -> None:
         ),
         n_used=n_plasma_total,
         method="plasma_linkage_qc",
-        evidence_level=2 if n_mapped_valid > 0 and collision_count == 0 else 0,
+        evidence_level=2 if n_confirmed_valid > 0 and collision_count == 0 else 0,
     )
     linkage_qc_path = cfg.results_dir / "linkage_qc_report.csv"
     linkage_qc.to_csv(linkage_qc_path, index=False)
     logger.info("Saved linkage QC report to: %s", linkage_qc_path)
 
     
-    group_to_state = {"Y": 0, "WT": 1, "V": -1, "GES": 2}
-    outcome = prim_plasma_meta["group"].map(group_to_state).astype(float)
-    outcome.index = prim_plasma_expr.columns  
-
-    n_plasma_samples = int(outcome.dropna().shape[0])
+    n_plasma_samples = int(len(prim_plasma_meta))
     if n_plasma_samples < 50:
         logger.warning(
             "Plasma biomarker ranking uses only %d samples; large |rho| may be unstable.",
@@ -2133,11 +2352,18 @@ def run(cfg: PipelineConfig) -> None:
         biomarker_top_k,
     )
 
-    plasma_biomarkers = compute_plasma_biomarkers(
+    plasma_biomarkers = compute_plasma_protein_contrasts(
         plasma_expr=prim_plasma_expr,
         plasma_meta=prim_plasma_meta,
-        outcome=outcome,
-        min_pairs=getattr(cfg, "plasma_biomarker_min_pairs", 8),
+        feature_annotations=plasma_feature_annotations,
+        contrasts=getattr(cfg, "plasma_treatment_contrasts", None)
+        or [
+            ("GES_vs_V", "GES", "V"),
+            ("WT_vs_V", "WT", "V"),
+            ("GES_vs_WT", "GES", "WT"),
+        ],
+        primary_contrast=getattr(cfg, "plasma_primary_contrast", "GES_vs_V"),
+        min_per_group=getattr(cfg, "plasma_contrast_min_per_group", 3),
         n_bootstrap=biomarker_bootstrap,
         random_state=getattr(cfg, "random_state", getattr(cfg, "random_seed", 42)),
         min_sign_agreement=getattr(cfg, "plasma_biomarker_sign_agreement_min", 0.8),
@@ -2148,13 +2374,14 @@ def run(cfg: PipelineConfig) -> None:
         available=not plasma_biomarkers.empty,
         estimable=not plasma_biomarkers.empty,
         reason=(
-            f"Small plasma sample size (n={n_plasma_samples}); interpret ranking with caution."
+            "Small plasma groups (n=8 each) and incompletely documented source normalization; "
+            "interpret treatment-associated protein contrasts as exploratory."
             if not plasma_biomarkers.empty and n_plasma_samples < 50
-            else ("" if not plasma_biomarkers.empty else "No biomarker associations could be estimated.")
+            else ("" if not plasma_biomarkers.empty else "No plasma protein contrasts could be estimated.")
         ),
         n_used=n_plasma_samples,
-        method="spearman_biomarker_ranking",
-        evidence_level=2 if not plasma_biomarkers.empty and bool(map_df["high_conf_link"].any()) else (1 if not plasma_biomarkers.empty else 0),
+        method="pairwise_ols_hc3_log2_abundance_group_sex",
+        evidence_level=1 if not plasma_biomarkers.empty else 0,
     )
 
     out_biomarkers_csv = cfg.results_dir / "plasma_biomarkers.csv"
@@ -2166,34 +2393,13 @@ def run(cfg: PipelineConfig) -> None:
         prim_plasma_meta.get("group", pd.Series(dtype=str)).value_counts().to_dict(),
     )
 
-    prim_plasma_state = call_with_supported_kwargs(
-        build_plasma_state_score,
-        plasma_matrix=prim_plasma_expr,  # main argument
-        plasma_meta=prim_plasma_meta,  # in case the signature uses it
-        meta=prim_plasma_meta,  # alias
-        metadata=prim_plasma_meta,  # alias
-        group_col="group",
-        treated_label=cfg.primate_treated_label,
-        control_label=getattr(cfg, "control_label", None),
-        control_labels=getattr(cfg, "primate_control_labels", None),
-        out_col="plasma_state_score",
-    )
-    if isinstance(prim_plasma_state, pd.Series):
-        prim_plasma_meta = prim_plasma_meta.copy()
-        score_map = prim_plasma_state.astype(float).to_dict()
-        prim_plasma_meta["plasma_state_score"] = (
-            prim_plasma_meta["sample_id"].astype(str).map(score_map)
-        )
-    elif isinstance(prim_plasma_state, pd.DataFrame):
-        if "sample_id" in prim_plasma_state.columns and "plasma_state_score" in prim_plasma_state.columns:
-            prim_plasma_meta = prim_plasma_meta.merge(
-                prim_plasma_state[["sample_id", "plasma_state_score"]],
-                on="sample_id",
-                how="left",
-            )
+    # The legacy all-sample PC1 state is retired. The reference-trained axis
+    # below supplies the only plasma state score used by downstream guarded
+    # analyses.
+    prim_plasma_state = pd.Series(dtype=float, name="plasma_state_score")
 
     # ---- Oriented plasma age-state axis ----
-    plasma_axis_method = "oriented_plasma_pc1_age_axis"
+    plasma_axis_method = "reference_trained_oriented_plasma_pc1_age_axis"
     if getattr(cfg, "enable_plasma_age_axis", True):
         try:
             plasma_group_values = {
@@ -2214,7 +2420,7 @@ def run(cfg: PipelineConfig) -> None:
                 sorted(
                     {
                         _canonical_group_label(group)
-                        for group in getattr(cfg, "plasma_axis_old_control_labels", ["O_C", "O_WT", "O_V", "WT", "V"])
+                        for group in getattr(cfg, "plasma_axis_old_control_labels", ["O_V", "V"])
                         if _canonical_group_label(group) in plasma_group_values
                         and _canonical_group_label(group) not in set(plasma_young_groups)
                         and _canonical_group_label(group) != plasma_treated_group
@@ -2222,19 +2428,14 @@ def run(cfg: PipelineConfig) -> None:
                 )
             )
             if not plasma_old_control_groups:
-                plasma_old_control_groups = tuple(
-                    sorted(
-                        group
-                        for group in plasma_group_values
-                        if group not in set(plasma_young_groups)
-                        and group not in {"M"}
-                        and group != plasma_treated_group
-                    )
-                )
+                # Vehicle is the only prespecified old reference for this axis.
+                # Do not substitute WTC or another observed group when V is absent.
+                plasma_old_control_groups = ("V",)
 
             plasma_axis_scores, plasma_axis_loadings, plasma_axis_summary = build_oriented_plasma_aging_axis(
                 plasma_expr=prim_plasma_expr,
                 plasma_meta=prim_plasma_meta,
+                feature_annotations=plasma_feature_annotations,
                 young_groups=plasma_young_groups,
                 old_control_groups=plasma_old_control_groups,
                 treated_groups=(plasma_treated_group,),
@@ -2279,7 +2480,7 @@ def run(cfg: PipelineConfig) -> None:
         estimable=plasma_axis_estimable,
         reason=plasma_axis_reason if not plasma_axis_estimable else None,
         method=plasma_axis_method,
-        evidence_level=2 if plasma_axis_estimable else 0,
+        evidence_level=1 if plasma_axis_estimable else 0,
     )
     plasma_axis_loadings = _ensure_standard_schema(
         plasma_axis_loadings,
@@ -2287,12 +2488,12 @@ def run(cfg: PipelineConfig) -> None:
         estimable=plasma_axis_estimable,
         reason=plasma_axis_reason if not plasma_axis_estimable else None,
         method=plasma_axis_method,
-        evidence_level=2 if plasma_axis_estimable else 0,
+        evidence_level=1 if plasma_axis_estimable else 0,
     )
     plasma_axis_summary = _ensure_standard_schema(
         plasma_axis_summary,
         method=plasma_axis_method,
-        evidence_level=2 if plasma_axis_estimable else 0,
+        evidence_level=1 if plasma_axis_estimable else 0,
     )
 
     plasma_axis_scores_path = cfg.results_dir / "plasma_age_axis_scores.csv"
@@ -2310,13 +2511,19 @@ def run(cfg: PipelineConfig) -> None:
         if "raw_pc1_score" in plasma_axis_scores.columns:
             merge_cols.append("raw_pc1_score")
         prim_plasma_meta = prim_plasma_meta.drop(
-            columns=[col for col in merge_cols if col != "sample_id" and col in prim_plasma_meta.columns],
+            columns=[
+                col
+                for col in [*merge_cols, "plasma_state_score"]
+                if col != "sample_id" and col in prim_plasma_meta.columns
+            ],
             errors="ignore",
         ).merge(
             plasma_axis_scores[merge_cols],
             on="sample_id",
             how="left",
         )
+        prim_plasma_meta["plasma_state_score"] = prim_plasma_meta["plasma_age_axis_score"]
+        prim_plasma_state = prim_plasma_meta.set_index("sample_id")["plasma_state_score"].copy()
 
     plasma_axis_delta_age = correlate_plasma_axis_with_delta_age(
         prim_meta=prim_meta,
@@ -2508,10 +2715,18 @@ def run(cfg: PipelineConfig) -> None:
     )
 
     try:
+        tissue_mapping_path = getattr(cfg, "mouse_tissue_mapping_path", None)
+        if tissue_mapping_path is None:
+            raise ValueError("No cross-species tissue mapping contract was configured.")
+        tissue_mapping_contract = load_cross_species_tissue_mapping(tissue_mapping_path)
+        tissue_mapping_contract.to_csv(
+            cfg.results_dir / "cross_species_tissue_mapping.csv", index=False
+        )
         exosome_alignment_by_tissue, exosome_alignment_summary = compute_exosome_alignment_tables(
             prim_tissue_effects,
             mouse_exosome_effects,
             tissue_map=getattr(cfg, "mouse_to_primate_tissue_map", None),
+            tissue_mapping=tissue_mapping_contract,
             contrasts=getattr(cfg, "mouse_alignment_contrasts", ["GES_vs_Veh", "WT_vs_Veh"]),
             min_common_tissues=int(getattr(cfg, "exosome_min_common_tissues", 3)),
             n_bootstrap=int(getattr(cfg, "n_bootstrap", 2000)),
@@ -2547,6 +2762,94 @@ def run(cfg: PipelineConfig) -> None:
     exosome_alignment_summary.to_csv(exosome_alignment_summary_path, index=False)
     logger.info("Saved exosome alignment summary to: %s", exosome_alignment_summary_path)
 
+    response_alignment_by_tissue = _result_stub(
+        reason="Cross-species response-alignment inputs are unavailable.",
+        method="cross_species_hedges_g_response_pair",
+        extra={
+            "mouse_tissue": "NA",
+            "primate_tissue": "NA",
+            "macaque_standardized_effect": np.nan,
+            "mouse_standardized_effect": np.nan,
+        },
+    )
+    response_alignment_summary = _result_stub(
+        reason="Cross-species response-alignment inputs are unavailable.",
+        method="cross_species_hedges_g_response_alignment",
+        extra={
+            "contrast_pair": "NA",
+            "n_common_tissues": 0,
+            "cosine_similarity": np.nan,
+            "relative_response_norm": np.nan,
+            "aligned_response_coefficient": np.nan,
+        },
+    )
+    try:
+        response_alignment_by_tissue, response_alignment_summary = (
+            compute_cross_species_response_alignment(
+                prim_meta,
+                mouse_sample_outcomes,
+                getattr(cfg, "mouse_tissue_mapping_path"),
+                primate_treated=cfg.primate_treated_label,
+                primate_control=cfg.primate_vehicle_label,
+                mouse_treated=getattr(cfg, "mouse_treated_label", "GES"),
+                mouse_control="Veh",
+                min_per_group=max(2, int(cfg.min_samples_per_group_for_rejuv)),
+                min_common_tissues=int(getattr(cfg, "exosome_min_common_tissues", 3)),
+                n_bootstrap=int(getattr(cfg, "response_alignment_bootstrap", 1000)),
+                n_permutations=int(getattr(cfg, "response_alignment_permutations", 1000)),
+                random_state=int(getattr(cfg, "random_state", getattr(cfg, "random_seed", 42))),
+            )
+        )
+        response_alignment_by_tissue = _ensure_standard_schema(
+            response_alignment_by_tissue,
+            method="cross_species_hedges_g_response_pair",
+        )
+        response_alignment_summary = _ensure_standard_schema(
+            response_alignment_summary,
+            method="cross_species_hedges_g_response_alignment",
+        )
+    except Exception as e:
+        logger.warning("Cross-species response alignment failed: %s", e)
+        response_alignment_by_tissue = _result_stub(
+            reason=f"Cross-species response alignment failed: {e}",
+            method="cross_species_hedges_g_response_pair",
+            extra={
+                "mouse_tissue": "NA",
+                "primate_tissue": "NA",
+                "macaque_standardized_effect": np.nan,
+                "mouse_standardized_effect": np.nan,
+            },
+        )
+        response_alignment_summary = _result_stub(
+            reason=f"Cross-species response alignment failed: {e}",
+            method="cross_species_hedges_g_response_alignment",
+            extra={
+                "contrast_pair": "NA",
+                "n_common_tissues": 0,
+                "cosine_similarity": np.nan,
+                "relative_response_norm": np.nan,
+                "aligned_response_coefficient": np.nan,
+            },
+        )
+
+    response_alignment_by_tissue_path = (
+        cfg.results_dir / "cross_species_response_alignment_by_tissue.csv"
+    )
+    response_alignment_by_tissue.to_csv(response_alignment_by_tissue_path, index=False)
+    logger.info(
+        "Saved cross-species response alignment by tissue to: %s",
+        response_alignment_by_tissue_path,
+    )
+
+    response_alignment_summary_path = (
+        cfg.results_dir / "cross_species_response_alignment_summary.csv"
+    )
+    response_alignment_summary.to_csv(response_alignment_summary_path, index=False)
+    logger.info(
+        "Saved cross-species response alignment summary to: %s",
+        response_alignment_summary_path,
+    )
+
     try:
         pattern_comparison = call_with_supported_kwargs(
             compare_effect_patterns,
@@ -2558,37 +2861,7 @@ def run(cfg: PipelineConfig) -> None:
     except Exception as e:
         logger.warning("Pattern comparison failed: %s", str(e))
 
-    try:
-        exo_fraction = estimate_exosome_fraction_with_uncertainty(
-            effect_cells=prim_tissue_effects,
-            effect_exosomes=mouse_tissue_effects,
-            n_bootstrap=cfg.exosome_fraction_bootstrap,
-            n_permutations=cfg.exosome_fraction_permutations,
-            random_state=cfg.random_state,
-            min_common_tissues=cfg.exosome_min_common_tissues,
-            min_cells_median_abs=cfg.exosome_min_cells_median_abs,
-        )
-        if not bool(exo_fraction.get("estimable", False)):
-            logger.warning(
-                "Exosome fraction not estimable: %s",
-                exo_fraction.get("reason", "unknown reason"),
-            )
-    except Exception as e:
-        logger.warning("Exosome fraction estimation failed: %s", str(e))
-        exo_fraction = {
-            "available": False,
-            "estimable": False,
-            "reason": f"Exosome fraction estimation failed: {str(e)}",
-            "n_used": 0,
-            "method": "median_abs_ratio_bootstrap_permutation",
-            "ci_low": np.nan,
-            "ci_high": np.nan,
-            "n_common_tissues": 0,
-            "cells_median_abs": np.nan,
-            "exo_median_abs": np.nan,
-            "ratio": np.nan,
-            "empirical_p_value": np.nan,
-        }
+    exo_fraction = _causal_exosome_fraction_status()
 
     # ------------------------- Translational insights -------------------------
     prim_outcomes = prim_meta.copy()
@@ -2733,8 +3006,11 @@ def run(cfg: PipelineConfig) -> None:
     except Exception as e:
         logger.warning("plot_plasma_biomarker_ranking skipped: %s", str(e))
 
-    # ---- Final logging & compatibility exosome-fraction summary CSV ----
-    logger.info("Done. Compatibility exosome-fraction estimate: %s", exo_fraction)
+    # ---- Final logging & causal non-identifiability summary ----
+    logger.info(
+        "Causal exosome-attributable fraction is not identified; "
+        "cross-species response alignment is reported separately."
+    )
 
     # Normalise exo_fraction and ALWAYS write a summary CSV
     if exo_fraction is None:
@@ -2753,18 +3029,11 @@ def run(cfg: PipelineConfig) -> None:
         "estimable": bool(exo_fraction.get("estimable", False)),
         "reason": str(exo_fraction.get("reason", "")),
         "n_used": int(exo_fraction.get("n_used", 0) or 0),
-        "method": str(exo_fraction.get("method", "median_abs_ratio_bootstrap_permutation")),
+        "method": str(exo_fraction.get("method", "causal_exosome_fraction_not_identified")),
         "ci_low": exo_fraction.get("ci_low", np.nan),
         "ci_high": exo_fraction.get("ci_high", np.nan),
     }
-    exo_summary["evidence_level"] = _compatibility_exosome_fraction_evidence_level(
-        estimable=bool(exo_summary["estimable"]),
-        has_exosome_alignment=bool(
-            exosome_alignment_summary is not None
-            and not exosome_alignment_summary.empty
-            and exosome_alignment_summary["estimable"].astype(bool).any()
-        ),
-    )
+    exo_summary["evidence_level"] = 0
     exo_df = pd.DataFrame([exo_summary])
     exo_df = _ensure_standard_schema(
         exo_df,
@@ -2845,9 +3114,20 @@ def _build_default_config(
         data_profile=resolved_profile,
         data_root=resolved_data_root,
         primate_bulk=primate_bulk,
+        primate_bulk_input_mode=spec["bulk_input_mode"],
+        primate_bulk_representation=spec["bulk_representation"],
+        clock_protocol=spec["clock_protocol"],
+        clock_excluded_sample_ids=spec["clock_excluded_sample_ids"],
+        clock_fold_assignments=(
+            base_dir / spec["clock_fold_file"]
+            if spec["clock_fold_file"] is not None
+            else None
+        ),
+        clock_fold_assignments_sha256=spec["clock_fold_sha256"],
         primate_plasma=primate_plasma,
         primate_methylation=primate_methylation,
         mouse_exosome_bulk=mouse_exosome_bulk,
+        mouse_tissue_mapping_path=base_dir / "config" / "cross_species_tissue_map.csv",
         results_dir=base_dir / "results",
         figures_dir=base_dir / "figures",
     )
@@ -2894,11 +3174,32 @@ def main() -> None:
         cfg.mouse_tissue_permutations = min(cfg.mouse_tissue_permutations, 250)
         cfg.exosome_fraction_bootstrap = min(cfg.exosome_fraction_bootstrap, 500)
         cfg.exosome_fraction_permutations = min(cfg.exosome_fraction_permutations, 250)
+        cfg.response_alignment_bootstrap = min(cfg.response_alignment_bootstrap, 250)
+        cfg.response_alignment_permutations = min(cfg.response_alignment_permutations, 250)
         cfg.n_bootstrap = min(cfg.n_bootstrap, 500)
+        cfg.treatment_n_permutations = min(cfg.treatment_n_permutations, 500)
         cfg.plasma_biomarker_bootstrap = min(cfg.plasma_biomarker_bootstrap, 80)
         cfg.plasma_biomarker_stability_top_k = min(cfg.plasma_biomarker_stability_top_k, 150)
 
-    run(cfg)
+    run_manifest_path = begin_run_manifest(
+        cfg,
+        repo_root=base_dir,
+        argv=[sys.executable, "-m", "src.run_pipeline", *sys.argv[1:]],
+    )
+    logger.info("Run provenance manifest started at: %s", run_manifest_path)
+    try:
+        run(cfg)
+    except BaseException as exc:
+        finalize_run_manifest(
+            run_manifest_path,
+            cfg,
+            status="failed",
+            error=exc,
+        )
+        raise
+    else:
+        finalize_run_manifest(run_manifest_path, cfg, status="completed")
+        logger.info("Run provenance manifest completed at: %s", run_manifest_path)
 
 
 if __name__ == "__main__":

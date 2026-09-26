@@ -8,6 +8,8 @@ downstream mediation/decomposition analyses.
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from typing import Any, Dict, Sequence
 
 import pandas as pd
@@ -43,6 +45,132 @@ def _canonical_group_label(x: Any) -> str:
     return s
 
 
+def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _confirmed_boolean(series: pd.Series, *, column: str) -> pd.Series:
+    tokens = series.astype(str).str.strip().str.lower()
+    allowed = {"true": True, "1": True, "yes": True, "false": False, "0": False, "no": False}
+    invalid = sorted(set(tokens) - set(allowed))
+    if invalid:
+        raise ValueError(f"Validated linkage manifest has invalid {column} values: {invalid}")
+    return tokens.map(allowed).astype(bool)
+
+
+def load_validated_plasma_linkage_manifest(
+    path: Path | str,
+    *,
+    expected_sha256: str | None,
+    plasma_meta: pd.DataFrame,
+    primate_meta: pd.DataFrame,
+    sample_col: str = "sample_id",
+    animal_col: str = "animal_id",
+    group_col: str = "group",
+    sex_col: str = "sex",
+) -> pd.DataFrame:
+    """Validate an explicitly confirmed one-to-one plasma-to-animal key."""
+    manifest_path = Path(path)
+    if not manifest_path.is_file():
+        raise ValueError(f"Validated linkage manifest does not exist: {manifest_path.name}")
+    expected = str(expected_sha256 or "").strip().lower()
+    if len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected):
+        raise ValueError("A 64-character SHA-256 is required for the validated linkage manifest.")
+    observed = _sha256_file(manifest_path)
+    if observed != expected:
+        raise ValueError(
+            "Validated linkage manifest SHA-256 mismatch "
+            f"(expected {expected}, observed {observed})."
+        )
+
+    manifest = pd.read_csv(manifest_path, dtype=str)
+    required = {sample_col, animal_col, "identity_confirmed", "evidence_source"}
+    missing = sorted(required.difference(manifest.columns))
+    if missing:
+        raise ValueError(f"Validated linkage manifest is missing columns: {missing}")
+    manifest = manifest.loc[:, [sample_col, animal_col, "identity_confirmed", "evidence_source"]].copy()
+    for column in (sample_col, animal_col, "evidence_source"):
+        manifest[column] = manifest[column].astype(str).str.strip()
+        if manifest[column].isin({"", "nan", "None", "<NA>"}).any():
+            raise ValueError(f"Validated linkage manifest contains empty {column} values.")
+    if manifest.empty:
+        raise ValueError("Validated linkage manifest contains no links.")
+    if manifest[sample_col].duplicated().any():
+        raise ValueError("Validated linkage manifest contains duplicate sample_id values.")
+    if manifest[animal_col].duplicated().any():
+        raise ValueError("Validated linkage manifest is not one-to-one: duplicate animal_id values.")
+    confirmed = _confirmed_boolean(manifest["identity_confirmed"], column="identity_confirmed")
+    if not confirmed.all():
+        raise ValueError("Every validated linkage row must have identity_confirmed=true.")
+
+    required_plasma = {sample_col, group_col, sex_col}
+    required_primate = {animal_col, group_col, sex_col}
+    if not required_plasma.issubset(plasma_meta.columns):
+        raise ValueError(f"Plasma metadata is missing linkage-check columns: {sorted(required_plasma - set(plasma_meta.columns))}")
+    if not required_primate.issubset(primate_meta.columns):
+        raise ValueError(f"Primate metadata is missing linkage-check columns: {sorted(required_primate - set(primate_meta.columns))}")
+
+    plasma_units = plasma_meta.loc[:, [sample_col, group_col, sex_col]].copy()
+    if plasma_units[sample_col].duplicated().any():
+        raise ValueError("Plasma metadata contains duplicate sample_id values.")
+    primate_units = primate_meta.loc[:, [animal_col, group_col, sex_col]].drop_duplicates().copy()
+    inconsistent = (
+        primate_units.groupby(animal_col, observed=True)[[group_col, sex_col]]
+        .nunique(dropna=False)
+        .gt(1)
+        .any(axis=1)
+    )
+    if inconsistent.any():
+        bad = sorted(inconsistent.index[inconsistent].astype(str).tolist())
+        raise ValueError(f"Primate metadata assigns multiple group/sex values to animal_id: {bad}")
+    primate_units = primate_units.drop_duplicates(animal_col)
+
+    checked = manifest.merge(plasma_units, on=sample_col, how="left", validate="one_to_one")
+    if checked[[group_col, sex_col]].isna().any(axis=None):
+        missing_samples = checked.loc[checked[group_col].isna() | checked[sex_col].isna(), sample_col].tolist()
+        raise ValueError(f"Validated linkage sample_id values are absent from plasma metadata: {missing_samples}")
+    checked = checked.merge(
+        primate_units,
+        on=animal_col,
+        how="left",
+        suffixes=("_plasma", "_primate"),
+        validate="one_to_one",
+    )
+    primate_group_col = f"{group_col}_primate"
+    primate_sex_col = f"{sex_col}_primate"
+    if checked[[primate_group_col, primate_sex_col]].isna().any(axis=None):
+        missing_animals = checked.loc[
+            checked[primate_group_col].isna() | checked[primate_sex_col].isna(), animal_col
+        ].tolist()
+        raise ValueError(f"Validated linkage animal_id values are absent from primate metadata: {missing_animals}")
+
+    plasma_groups = checked[f"{group_col}_plasma"].map(_canonical_group_label)
+    primate_groups = checked[primate_group_col].map(_canonical_group_label)
+    if not plasma_groups.eq(primate_groups).all():
+        bad = checked.loc[~plasma_groups.eq(primate_groups), sample_col].tolist()
+        raise ValueError(f"Validated linkage group mismatch for sample_id values: {bad}")
+    plasma_sex = checked[f"{sex_col}_plasma"].astype(str).str.strip().str.upper()
+    primate_sex = checked[primate_sex_col].astype(str).str.strip().str.upper()
+    if not plasma_sex.eq(primate_sex).all():
+        bad = checked.loc[~plasma_sex.eq(primate_sex), sample_col].tolist()
+        raise ValueError(f"Validated linkage sex mismatch for sample_id values: {bad}")
+
+    result = manifest.copy()
+    result["identity_confirmed"] = confirmed.to_numpy()
+    result["animal_id_source"] = "validated_manifest"
+    result["animal_id_confidence"] = "metadata_exact"
+    result["mapping_rule"] = "validated_manifest_sha256"
+    result["mapping_reason"] = result["evidence_source"].map(
+        lambda source: f"Explicit biological identity confirmed by {source}"
+    )
+    result["linkage_manifest_sha256"] = observed
+    return result
+
+
 def audit_primate_plasma_linkage(
     prim_meta: pd.DataFrame,
     prim_plasma_meta: pd.DataFrame,
@@ -50,7 +178,7 @@ def audit_primate_plasma_linkage(
     group_col: str = "group",
     sex_col: str = "sex",
     animal_confidence_col: str = "animal_id_confidence",
-    high_conf_values: Sequence[str] = ("high", "metadata", "metadata_exact"),
+    high_conf_values: Sequence[str] = ("high", "metadata_exact"),
     treated_label: str = "O_GES",
     control_labels: Sequence[str] = ("O_V", "O_WT"),
 ) -> Dict[str, Any]:

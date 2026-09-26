@@ -23,7 +23,7 @@ pipeline.
 
 This dataset is useful for future **PBMC-focused cell-state or mechanistic
 follow-up**, but it does not materially strengthen the current
-**cross-tissue macaque rejuvenation vs exosome-aligned contribution**
+**cross-species macaque whole-cell versus mouse exosome response alignment**
 question:
 
 - tissue scope is limited to `PBMC`

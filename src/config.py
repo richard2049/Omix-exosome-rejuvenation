@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -33,8 +33,13 @@ class PipelineConfig:
     primate_bulk: OmixPaths
     data_profile: str = "auto"
     data_root: Optional[Path] = None
+    primate_bulk_input_mode: str = "feature_indexed"
+    primate_bulk_representation: str = "log1p_counts"
     primate_bulk_age_col: str = "age"
     primate_plasma: Optional[OmixPaths] = None
+    plasma_linkage_manifest: Optional[Path] = None
+    plasma_linkage_manifest_sha256: Optional[str] = None
+    linkage_high_conf_values: Optional[List[str]] = None
     primate_methylation: Optional[OmixPaths] = None
     mouse_exosome_bulk: Optional[OmixPaths] = None
     max_allowed_samples: int = 5000
@@ -42,9 +47,23 @@ class PipelineConfig:
     min_samples_per_group_for_rejuv: int = 2
     mediation_bootstrap: int = 500
     clock_model: str = "ridge"
+    clock_protocol: str = "legacy_all_samples_ridge"
+    clock_cv_folds: int = 5
+    clock_inner_folds: int = 3
+    clock_inner_seed: int = 20260917
+    clock_reference_groups: Optional[List[str]] = None
+    clock_ridge_alphas: Optional[List[float]] = None
+    clock_diagnostic_seeds: Optional[List[int]] = None
+    clock_excluded_sample_ids: Optional[List[str]] = None
+    clock_fold_assignments: Optional[Path] = None
+    clock_fold_assignments_sha256: Optional[str] = None
     control_label: str = "Control"
     primate_treated_label: str = "O_GES"
+    primate_vehicle_label: str = "O_V"
+    primate_wtc_label: str = "O_WT"
     primate_control_labels: Optional[List[str]] = None
+    primate_treatment_contrasts: Optional[List[Tuple[str, str, str]]] = None
+    primate_primary_contrast: str = "SRC_vs_vehicle"
     top_genes_per_tissue: int = 100
     top_plasma_biomarkers: int = 50
     random_seed: int = 42
@@ -55,7 +74,10 @@ class PipelineConfig:
     exosome_fraction_permutations: int = 1000
     exosome_min_common_tissues: int = 3
     exosome_min_cells_median_abs: float = 1e-8
-    enable_mediation: bool = True
+    response_alignment_bootstrap: int = 1000
+    response_alignment_permutations: int = 1000
+    # The public plasma aliases are candidates until cross-modal identity is confirmed.
+    enable_mediation: bool = False
     enable_causal_decomposition: bool = True
     # Optional modules flags
     enable_methylation_block: bool = True
@@ -73,6 +95,7 @@ class PipelineConfig:
     mouse_tissue_permutations: int = 1000
     mouse_alignment_contrasts: Optional[List[str]] = None
     mouse_to_primate_tissue_map: Optional[Dict[str, str]] = None
+    mouse_tissue_mapping_path: Optional[Path] = Path("config/cross_species_tissue_map.csv")
 
     # Methylation validation
     methylation_group_age_map: Optional[Dict[str, float]] = None
@@ -104,6 +127,9 @@ class PipelineConfig:
     plasma_axis_min_non_nan_frac: float = 0.8
     plasma_axis_min_linked_animals: int = 8
     sensitivity_top_feature_thresholds: Optional[List[int]] = None
+    plasma_treatment_contrasts: Optional[List[Tuple[str, str, str]]] = None
+    plasma_primary_contrast: str = "GES_vs_V"
+    plasma_contrast_min_per_group: int = 3
     plasma_biomarker_min_pairs: int = 8
     plasma_biomarker_bootstrap: int = 120
     plasma_biomarker_sign_agreement_min: float = 0.8
@@ -112,6 +138,7 @@ class PipelineConfig:
     # Statistics
     random_state: int = 42
     n_bootstrap: int = 2000
+    treatment_n_permutations: int = 2000
 
     # Output
     results_dir: Path = Path("results")
@@ -162,15 +189,56 @@ class PipelineConfig:
         ]
 
         self.primate_control_labels = self.primate_control_labels or [
-            "Y_C", "M_C", "O_C", "O_WT", "O_V"
+            "Y_C", "M_C", "O_C", "O_V"
         ]
+        self.primate_treatment_contrasts = self.primate_treatment_contrasts or [
+            ("SRC_vs_vehicle", "O_GES", "O_V"),
+            ("WTC_vs_vehicle", "O_WT", "O_V"),
+            ("SRC_vs_WTC", "O_GES", "O_WT"),
+        ]
+        self.clock_reference_groups = self.clock_reference_groups or [
+            "Y_C", "M_C", "O_C", "O_V"
+        ]
+        self.clock_ridge_alphas = self.clock_ridge_alphas or [
+            0.0001,
+            0.001,
+            0.01,
+            0.1,
+            1.0,
+            10.0,
+            100.0,
+            1000.0,
+            10000.0,
+            100000.0,
+            1000000.0,
+        ]
+        self.clock_diagnostic_seeds = self.clock_diagnostic_seeds or [17, 29, 43]
+        self.clock_excluded_sample_ids = self.clock_excluded_sample_ids or []
         self.plasma_axis_young_labels = self.plasma_axis_young_labels or ["Y", "Y_C"]
+        self.linkage_high_conf_values = self.linkage_high_conf_values or [
+            "high",
+            "metadata_exact",
+        ]
+        normalized_linkage_confidence = {
+            str(value).strip().lower() for value in self.linkage_high_conf_values
+        }
+        unsupported_linkage_confidence = normalized_linkage_confidence.difference(
+            {"high", "metadata_exact"}
+        )
+        if unsupported_linkage_confidence:
+            raise ValueError(
+                "linkage_high_conf_values contains unverified confidence labels: "
+                f"{sorted(unsupported_linkage_confidence)}"
+            )
+        self.linkage_high_conf_values = sorted(normalized_linkage_confidence)
         self.plasma_axis_old_control_labels = self.plasma_axis_old_control_labels or [
-            "O_C",
-            "O_WT",
             "O_V",
-            "WT",
             "V",
+        ]
+        self.plasma_treatment_contrasts = self.plasma_treatment_contrasts or [
+            ("GES_vs_V", "GES", "V"),
+            ("WT_vs_V", "WT", "V"),
+            ("GES_vs_WT", "GES", "WT"),
         ]
         self.mouse_control_labels = self.mouse_control_labels or [
             "Veh", "WT", "Ctrl", "Baseline"

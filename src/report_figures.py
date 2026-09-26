@@ -393,6 +393,18 @@ def _add_effect_uncertainty_for_plot(work: pd.DataFrame, effect_col: str = "effe
     return out
 
 
+def _select_primary_treatment_contrast(df: pd.DataFrame) -> pd.DataFrame:
+    """Select the prespecified SRC-versus-vehicle rows when contrasts are explicit."""
+    if "is_primary" in df.columns:
+        return df.loc[_bool_series(df, "is_primary", default=False)].copy()
+    if "contrast" in df.columns:
+        labels = df["contrast"].astype(str)
+        primary = labels.isin({"SRC_vs_vehicle", "GES_vs_Veh"})
+        if primary.any():
+            return df.loc[primary].copy()
+    return df.copy()
+
+
 def plot_tissue_rejuvenation_forest(results_dir: Path, out_dir: Path) -> FigureRecord:
     source = "rejuvenation_by_tissue.csv"
     df = _read_table(results_dir, source)
@@ -406,7 +418,8 @@ def plot_tissue_rejuvenation_forest(results_dir: Path, out_dir: Path) -> FigureR
         )
 
     work = df.loc[_bool_series(df, "estimable", default=True)].copy()
-    effect_col = "effect_median" if "effect_median" in work.columns else "mean_effect"
+    work = _select_primary_treatment_contrast(work)
+    effect_col = "mean_effect" if "mean_effect" in work.columns else "effect_median"
     if effect_col not in work.columns or "tissue" not in work.columns:
         return _status_figure(
             out_path=out_path,
@@ -463,14 +476,14 @@ def plot_tissue_rejuvenation_forest(results_dir: Path, out_dir: Path) -> FigureR
         ]
     )
     ax.set_xlabel("Treatment effect on delta age (years; negative = younger)")
-    ax.set_title("Tissue-Level Delta-Age Effects")
+    ax.set_title("Tissue-Level Delta-Age Effects: SRC vs Vehicle")
     ax.grid(axis="x", color=GRID, linewidth=0.8)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.text(
         0.0,
         -0.16,
-        "Open markers have confidence intervals crossing zero; their sign is nominal and should be used only for prioritization.",
+        "Open markers have pointwise 95% bootstrap intervals crossing zero; multiplicity-adjusted p-values remain in the source table.",
         transform=ax.transAxes,
         color=MUTED,
         fontsize=8.5,
@@ -499,7 +512,8 @@ def plot_top_tissue_priority(results_dir: Path, out_dir: Path, top_n: int = 8) -
         )
 
     work = df.loc[_bool_series(df, "estimable", default=True)].copy()
-    effect_col = "effect_median" if "effect_median" in work.columns else "mean_effect"
+    work = _select_primary_treatment_contrast(work)
+    effect_col = "mean_effect" if "mean_effect" in work.columns else "effect_median"
     if effect_col not in work.columns or "tissue" not in work.columns:
         return _status_figure(
             out_path=out_path,
@@ -705,6 +719,11 @@ def plot_exosome_alignment_by_tissue(results_dir: Path, out_dir: Path) -> Figure
         )
 
     work = df.loc[_bool_series(df, "estimable", default=False)].copy()
+    weak_context_count = 0
+    if "include_in_primary" in work.columns:
+        primary_mask = _bool_series(work, "include_in_primary", default=False)
+        weak_context_count = int((~primary_mask).sum())
+        work = work.loc[primary_mask].copy()
     if work.empty:
         reason = _first_text(df, "reason_code", "NON_ESTIMABLE_UNSPECIFIED")
         key = _first_text(df, "missing_author_key", "review_required")
@@ -761,14 +780,30 @@ def plot_exosome_alignment_by_tissue(results_dir: Path, out_dir: Path) -> Figure
     ax.text(
         0.0,
         -0.14,
-        "This is cross-species mechanism support, not direct primate causal mediation.",
+        (
+            "This is cross-species mechanism support, not direct primate causal mediation. "
+            + (
+                f"{weak_context_count} weak-context pair(s) remain in the result table as sensitivity only."
+                if weak_context_count
+                else ""
+            )
+        ),
         transform=ax.transAxes,
         color=MUTED,
         fontsize=8.5,
     )
     _save(fig, out_path)
     n_discordant = int((work["signed_concordance_num"] < 0.5).sum())
-    return FigureRecord(out_path.name, out_path, source, "ok", f"{len(work)} tissue rows plotted; {n_discordant} discordant")
+    return FigureRecord(
+        out_path.name,
+        out_path,
+        source,
+        "ok",
+        (
+            f"{len(work)} primary tissue rows plotted; {n_discordant} discordant; "
+            f"{weak_context_count} weak-context sensitivity rows excluded"
+        ),
+    )
 
 
 def plot_estimability_status(results_dir: Path, out_dir: Path) -> FigureRecord:
@@ -952,22 +987,37 @@ def plot_plasma_biomarkers(results_dir: Path, out_dir: Path, top_n: int = 15) ->
             message="No plasma biomarker table was available.",
             source=source,
         )
-    if "protein" not in df.columns or "spearman_r" not in df.columns:
+    is_contrast_table = "log2_fold_change" in df.columns
+    if not is_contrast_table and ("protein" not in df.columns or "spearman_r" not in df.columns):
         return _status_figure(
             out_path=out_path,
-            title="Plasma Biomarker Candidates",
-            message="The biomarker table is missing protein or signed Spearman columns.",
+            title="Plasma Protein Signals",
+            message="The plasma table is missing treatment-effect or legacy association columns.",
             source=source,
         )
 
     work = df.copy()
-    work["protein"] = work["protein"].astype(str).str.strip()
+    if is_contrast_table and "is_primary" in work.columns:
+        primary = _bool_series(work, "is_primary", default=False)
+        if primary.any():
+            work = work.loc[primary].copy()
+    if "gene_name" in work.columns:
+        work["protein"] = work["gene_name"].astype("string").fillna("").str.strip()
+        if "protein_accession" in work.columns:
+            fallback = work["protein_accession"].astype("string").fillna("").str.strip()
+            work["protein"] = work["protein"].where(work["protein"].ne(""), fallback)
+    else:
+        work["protein"] = work["protein"].astype(str).str.strip()
     work = work.loc[work["protein"].ne("") & work["protein"].ne("--")].copy()
-    work["rho"] = _numeric(work, "spearman_r")
+    work["rho"] = _numeric(work, "log2_fold_change" if is_contrast_table else "spearman_r")
     work["abs_rho"] = work["rho"].abs()
     work["stable"] = _bool_series(work, "stable_association", default=False)
-    work["rho_ci_low_num"] = _numeric(work, "rho_ci_low")
-    work["rho_ci_high_num"] = _numeric(work, "rho_ci_high")
+    if is_contrast_table:
+        work["rho_ci_low_num"] = _numeric(work, "bootstrap_ci_low").fillna(_numeric(work, "ci_low"))
+        work["rho_ci_high_num"] = _numeric(work, "bootstrap_ci_high").fillna(_numeric(work, "ci_high"))
+    else:
+        work["rho_ci_low_num"] = _numeric(work, "rho_ci_low")
+        work["rho_ci_high_num"] = _numeric(work, "rho_ci_high")
     stable = work.loc[work["stable"]].copy()
     if not stable.empty:
         work = stable
@@ -976,8 +1026,8 @@ def plot_plasma_biomarkers(results_dir: Path, out_dir: Path, top_n: int = 15) ->
     if work.empty:
         return _status_figure(
             out_path=out_path,
-            title="Plasma Biomarker Candidates",
-            message="No named plasma proteins had finite signed Spearman estimates.",
+            title="Plasma Protein Signals",
+            message="No named plasma proteins had finite treatment-effect estimates.",
             source=source,
         )
 
@@ -995,16 +1045,29 @@ def plot_plasma_biomarkers(results_dir: Path, out_dir: Path, top_n: int = 15) ->
     ax.axvline(0, color=INK, linewidth=1)
     ax.set_yticks(y)
     ax.set_yticklabels(work["protein"].tolist())
-    ax.set_xlabel("Signed Spearman association with plasma state")
+    ax.set_xlabel(
+        "Adjusted log2 fold-change (GES - vehicle)"
+        if is_contrast_table
+        else "Signed Spearman association with legacy plasma state"
+    )
     subtitle = "stable associations only" if not stable.empty else "top named associations"
-    ax.set_title(f"Plasma Biomarker Candidates ({subtitle})")
+    plot_title = (
+        "Treatment-Associated Plasma Protein Signals"
+        if is_contrast_table
+        else "Legacy Plasma Protein Associations"
+    )
+    ax.set_title(f"{plot_title} ({subtitle})")
     ax.grid(axis="x", color=GRID, linewidth=0.8)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.text(
         0.0,
         -0.16,
-        "Negative and positive signs are retained; unnamed proteins are excluded from the report figure.",
+        (
+            "Effects are within-plasma treatment associations, not rejuvenation biomarkers or therapeutic targets."
+            if is_contrast_table
+            else "Legacy signed associations are shown only for historical output compatibility."
+        ),
         transform=ax.transAxes,
         color=MUTED,
         fontsize=8.5,
@@ -1024,18 +1087,29 @@ def plot_plasma_biomarker_categories(results_dir: Path, out_dir: Path, top_n: in
             message="No plasma biomarker table was available.",
             source=source,
         )
-    if "protein" not in df.columns or "spearman_r" not in df.columns:
+    is_contrast_table = "log2_fold_change" in df.columns
+    if not is_contrast_table and ("protein" not in df.columns or "spearman_r" not in df.columns):
         return _status_figure(
             out_path=out_path,
-            title="Plasma Biomarker Categories",
-            message="The biomarker table is missing protein or signed Spearman columns.",
+            title="Plasma Protein Categories",
+            message="The plasma table is missing treatment-effect or legacy association columns.",
             source=source,
         )
 
     work = df.copy()
-    work["protein"] = work["protein"].astype(str).str.strip()
+    if is_contrast_table and "is_primary" in work.columns:
+        primary = _bool_series(work, "is_primary", default=False)
+        if primary.any():
+            work = work.loc[primary].copy()
+    if "gene_name" in work.columns:
+        work["protein"] = work["gene_name"].astype("string").fillna("").str.strip()
+        if "protein_accession" in work.columns:
+            fallback = work["protein_accession"].astype("string").fillna("").str.strip()
+            work["protein"] = work["protein"].where(work["protein"].ne(""), fallback)
+    else:
+        work["protein"] = work["protein"].astype(str).str.strip()
     work = work.loc[work["protein"].map(_is_named_protein)].copy()
-    work["rho"] = _numeric(work, "spearman_r")
+    work["rho"] = _numeric(work, "log2_fold_change" if is_contrast_table else "spearman_r")
     work["abs_rho"] = work["rho"].abs()
     work["stable"] = _bool_series(work, "stable_association", default=False)
     if work["stable"].any():
@@ -1044,8 +1118,8 @@ def plot_plasma_biomarker_categories(results_dir: Path, out_dir: Path, top_n: in
     if work.empty:
         return _status_figure(
             out_path=out_path,
-            title="Plasma Biomarker Categories",
-            message="No named plasma proteins had finite signed association estimates.",
+            title="Plasma Protein Categories",
+            message="No named plasma proteins had finite treatment-effect estimates.",
             source=source,
         )
 
@@ -1063,33 +1137,39 @@ def plot_plasma_biomarker_categories(results_dir: Path, out_dir: Path, top_n: in
     else:
         work["category"] = work["protein"].map(_protein_category)
         annotation_note = "Categories are heuristic protein-symbol groupings, not formal pathway enrichment."
-    work["signed_direction"] = np.where(work["rho"] < 0, "negative signed association", "positive signed association")
+    negative_label = "lower in GES" if is_contrast_table else "negative signed association"
+    positive_label = "higher in GES" if is_contrast_table else "positive signed association"
+    work["signed_direction"] = np.where(work["rho"] < 0, negative_label, positive_label)
     counts = (
         work.groupby(["category", "signed_direction"], dropna=False)
         .size()
         .unstack(fill_value=0)
         .sort_index()
     )
-    for col in ["negative signed association", "positive signed association"]:
+    for col in [negative_label, positive_label]:
         if col not in counts.columns:
             counts[col] = 0
-    counts["total"] = counts["negative signed association"] + counts["positive signed association"]
+    counts["total"] = counts[negative_label] + counts[positive_label]
     counts = counts.sort_values("total", ascending=True)
 
     _set_style()
     fig, ax = plt.subplots(figsize=(9.8, max(4.8, 0.48 * len(counts) + 2.2)))
     y = np.arange(len(counts))
-    negative = counts["negative signed association"].to_numpy(int)
-    positive = counts["positive signed association"].to_numpy(int)
-    ax.barh(y, -negative, color=TEAL, alpha=0.88, label="negative signed association")
-    ax.barh(y, positive, color=RUST, alpha=0.88, label="positive signed association")
+    negative = counts[negative_label].to_numpy(int)
+    positive = counts[positive_label].to_numpy(int)
+    ax.barh(y, -negative, color=TEAL, alpha=0.88, label=negative_label)
+    ax.barh(y, positive, color=RUST, alpha=0.88, label=positive_label)
     ax.axvline(0, color=INK, linewidth=1)
     ax.set_yticks(y)
     ax.set_yticklabels(counts.index.tolist())
     max_count = max(int(max(negative.max(initial=0), positive.max(initial=0))), 1)
     ax.set_xlim(-(max_count + 1), max_count + 1)
     ax.set_xlabel("Number of top named plasma proteins")
-    ax.set_title("Plasma Biomarker Categories by Signed Association")
+    ax.set_title(
+        "Plasma Protein Categories by GES-Vehicle Effect"
+        if is_contrast_table
+        else "Legacy Plasma Protein Categories by Signed Association"
+    )
     ax.legend(frameon=False, loc="lower right")
     ax.grid(axis="x", color=GRID, linewidth=0.8)
     ax.spines["top"].set_visible(False)
@@ -1299,12 +1379,24 @@ def plot_sensitivity_robustness(results_dir: Path, out_dir: Path) -> FigureRecor
             source=source,
         )
 
-    control_order = {"primary": 0, "no_vehicle_no_wt": 1, "oc_only": 2, "consensus": 3}
+    control_order = {
+        "SRC_vs_vehicle": 0,
+        "WTC_vs_vehicle": 1,
+        "SRC_vs_WTC": 2,
+        "primary": 10,
+        "no_vehicle_no_wt": 11,
+        "oc_only": 12,
+        "consensus": 13,
+    }
     work["scenario_text"] = work["scenario"].astype(str)
     work["scenario_order"] = work["scenario_text"].map(control_order).fillna(99).astype(int)
     work["top_n"] = pd.to_numeric(work["scenario_text"].str.extract(r"(\d+)")[0], errors="coerce")
 
-    control = work.loc[work["analysis_type"].isin(["control_set", "control_set_summary"])].copy()
+    control = work.loc[
+        work["analysis_type"].isin(
+            ["animal_level_treatment_contrast", "control_set", "control_set_summary"]
+        )
+    ].copy()
     control = control.sort_values(["scenario_order", "effect_num"])
     plasma = work.loc[work["analysis_type"].eq("top_features")].copy()
     plasma = plasma.sort_values("top_n", na_position="last")
@@ -1374,9 +1466,12 @@ def plot_sensitivity_robustness(results_dir: Path, out_dir: Path) -> FigureRecor
     draw_panel(
         axes[0],
         control,
-        title="Control-Set Sensitivity",
-        xlabel="Global delta-age effect: GES - selected controls (years)",
+        title="Animal-Level Treatment Contrasts",
+        xlabel="Secondary global delta-age contrast (years)",
         label_map={
+            "SRC_vs_vehicle": "SRC - vehicle (primary)",
+            "WTC_vs_vehicle": "WTC - vehicle",
+            "SRC_vs_WTC": "SRC - WTC",
             "primary": "Primary controls",
             "no_vehicle_no_wt": "No vehicle/WT controls",
             "oc_only": "Old untreated controls only",
@@ -1412,7 +1507,7 @@ def plot_sensitivity_robustness(results_dir: Path, out_dir: Path) -> FigureRecor
         out_path,
         source,
         "ok",
-        f"{len(control)} control-set scenarios and {len(plasma)} plasma top-feature scenarios plotted",
+        f"{len(control)} treatment/comparator scenarios and {len(plasma)} plasma top-feature scenarios plotted",
     )
 
 
@@ -1443,7 +1538,8 @@ def plot_evidence_ladder(results_dir: Path, out_dir: Path) -> FigureRecord:
         )
     else:
         rejuv_estimable = rejuvenation.loc[_bool_series(rejuvenation, "estimable", default=False)].copy()
-        effect_col = "effect_median" if "effect_median" in rejuv_estimable.columns else "mean_effect"
+        rejuv_estimable = _select_primary_treatment_contrast(rejuv_estimable)
+        effect_col = "mean_effect" if "mean_effect" in rejuv_estimable.columns else "effect_median"
         rejuv_estimable["effect"] = _numeric(rejuv_estimable, effect_col)
         rejuv_estimable["ci_low_num"] = _numeric(rejuv_estimable, "ci_low")
         rejuv_estimable["ci_high_num"] = _numeric(rejuv_estimable, "ci_high")
@@ -1460,30 +1556,35 @@ def plot_evidence_ladder(results_dir: Path, out_dir: Path) -> FigureRecord:
         )
 
     tier = _first_text(estimability, "tier", "unlinked")
-    if (
-        plasma.empty
-        or not _bool_series(plasma, "estimable", default=False).any()
-        or tier != "fully_linked"
-    ):
+    if plasma.empty or not _bool_series(plasma, "estimable", default=False).any():
         rows.append(
             {
-                "level": 2,
-                "claim": "Plasma association in the linked subset",
+                "level": 1,
+                "claim": "Within-plasma treatment association",
                 "status": "Not estimable",
-                "detail": f"Linked plasma association unavailable; linkage tier={tier}.",
+                "detail": "No estimable prespecified plasma treatment contrasts.",
             }
         )
     else:
-        plasma_work = plasma.copy()
+        plasma_work = plasma.loc[_bool_series(plasma, "estimable", default=False)].copy()
+        if "is_primary" in plasma_work.columns:
+            primary = _bool_series(plasma_work, "is_primary", default=False)
+            if primary.any():
+                plasma_work = plasma_work.loc[primary].copy()
         plasma_work["protein"] = plasma_work.get("protein", pd.Series("", index=plasma_work.index)).astype(str).str.strip()
         plasma_work["stable"] = _bool_series(plasma_work, "stable_association", default=False)
         n_stable_named = int((plasma_work["stable"] & plasma_work["protein"].map(_is_named_protein)).sum())
+        n_fdr = int(_bool_series(plasma_work, "fdr_significant", default=False).sum())
         rows.append(
             {
-                "level": 2,
-                "claim": "Plasma association in the linked subset",
+                "level": 1,
+                "claim": "Within-plasma treatment association",
                 "status": "Exploratory",
-                "detail": f"{n_stable_named} stable named proteins; linkage tier={tier}.",
+                "detail": (
+                    f"Primary GES-vehicle contrast: {n_fdr} FDR-significant and "
+                    f"{n_stable_named} bootstrap-stable named proteins. "
+                    f"Cross-modal linkage remains {tier}."
+                ),
             }
         )
 
@@ -1589,7 +1690,7 @@ def plot_evidence_ladder(results_dir: Path, out_dir: Path) -> FigureRecord:
     ax.text(
         0.02,
         0.04,
-        "Observed does not mean statistically confirmed. Level 4 can remain exploratory when estimates are unstable or causal assumptions lack support.",
+        "Observed does not mean statistically confirmed. Causal mediation remains unestablished when estimates are unstable or identifying assumptions lack support.",
         transform=ax.transAxes,
         fontsize=8.5,
         color=MUTED,
@@ -1776,7 +1877,7 @@ def plot_public_data_ceiling_matrix(results_dir: Path, out_dir: Path) -> FigureR
     ax.text(
         0.02,
         0.04,
-        "Level 4 should remain unavailable unless direct linked mediation assumptions are met.",
+        "Causal exosome mediation should remain unavailable unless direct linked-mediation assumptions are met.",
         transform=ax.transAxes,
         fontsize=8.5,
         color=MUTED,
@@ -1808,7 +1909,9 @@ def plot_portfolio_aging_rejuvenation(
         )
 
     work = rejuvenation.loc[_bool_series(rejuvenation, "estimable", default=False)].copy()
-    work["effect"] = _numeric(work, "effect_median")
+    work = _select_primary_treatment_contrast(work)
+    effect_col = "mean_effect" if "mean_effect" in work.columns else "effect_median"
+    work["effect"] = _numeric(work, effect_col)
     work["ci_low_num"] = _numeric(work, "ci_low")
     work["ci_high_num"] = _numeric(work, "ci_high")
     work = work.dropna(subset=["effect", "ci_low_num", "ci_high_num"])
@@ -1855,7 +1958,7 @@ def plot_portfolio_aging_rejuvenation(
         ("Clock", f"Ridge + grouped CV\n{n_groups} animal groups"),
         ("Validation", f"CV predicted age\nSpearman r={spearman:.2f}\nMAE={mae:.2f} years"),
         ("Age deviation", "delta_age = predicted\n- chronological age"),
-        ("Tissue contrast", "Treated - controls\n95% bootstrap CI"),
+        ("Tissue contrast", "SRC - vehicle\nanimal bootstrap CI"),
     ]
     card_x = [0.02, 0.215, 0.41, 0.605, 0.80]
     for i, ((title, body), x) in enumerate(zip(cards, card_x)):
@@ -1924,12 +2027,18 @@ def plot_portfolio_multimodal_evidence(
     source = _source_label(
         "rejuvenation_by_tissue.csv",
         "linkage_qc_report.csv",
+        "estimability_report.csv",
         "exosome_alignment_summary.csv",
+        "cross_species_response_alignment_summary.csv",
         "multimodal_concordance_summary.csv",
     )
     rejuvenation = _read_table(results_dir, "rejuvenation_by_tissue.csv")
     linkage = _read_table(results_dir, "linkage_qc_report.csv")
+    estimability = _read_table(results_dir, "estimability_report.csv")
     alignment = _read_table(results_dir, "exosome_alignment_summary.csv")
+    response_alignment = _read_table(
+        results_dir, "cross_species_response_alignment_summary.csv"
+    )
     multimodal = _read_table(results_dir, "multimodal_concordance_summary.csv")
     out_path = out_dir / "report_portfolio_multimodal_evidence.png"
 
@@ -1938,15 +2047,33 @@ def plot_portfolio_multimodal_evidence(
         if not rejuvenation.empty
         else pd.DataFrame()
     )
+    if "is_primary" in rejuv_rows.columns:
+        primary_rows = rejuv_rows.loc[
+            _bool_series(rejuv_rows, "is_primary", default=False)
+        ].copy()
+        if not primary_rows.empty:
+            rejuv_rows = primary_rows
     rejuv_lows = _numeric(rejuv_rows, "ci_low")
     rejuv_highs = _numeric(rejuv_rows, "ci_high")
-    n_supported = int(((rejuv_lows > 0) | (rejuv_highs < 0)).sum()) if not rejuv_rows.empty else 0
+    n_nominal_ci = (
+        int(((rejuv_lows > 0) | (rejuv_highs < 0)).sum())
+        if not rejuv_rows.empty
+        else 0
+    )
+    n_tissues = (
+        int(rejuv_rows["tissue"].astype(str).nunique())
+        if "tissue" in rejuv_rows.columns
+        else int(len(rejuv_rows))
+    )
 
     linkage_row = linkage.iloc[0] if not linkage.empty else pd.Series(dtype=object)
     n_plasma = int(pd.to_numeric(pd.Series([linkage_row.get("n_plasma_total")]), errors="coerce").fillna(0).iloc[0])
+    # Bulk alias existence is not confirmed cross-modal identity. Use the
+    # canonical gate's high-confidence overlap, never candidate coverage.
+    gate_row = estimability.iloc[0] if not estimability.empty else pd.Series(dtype=object)
     n_valid_links = int(
         pd.to_numeric(
-            pd.Series([linkage_row.get("n_mapped_valid_in_bulk")]),
+            pd.Series([gate_row.get("n_overlap_animal_ids")]),
             errors="coerce",
         )
         .fillna(0)
@@ -1964,6 +2091,34 @@ def plot_portfolio_multimodal_evidence(
     n_common = int(_numeric_max(alignment_rows, "n_common_tissues", default=0))
     p_values = _numeric(alignment_rows, "permutation_p_value").dropna()
     best_p = float(p_values.min()) if not p_values.empty else np.nan
+    response_rows = (
+        response_alignment.loc[
+            _bool_series(response_alignment, "estimable", default=False)
+        ].copy()
+        if not response_alignment.empty
+        else pd.DataFrame()
+    )
+    if not response_rows.empty:
+        response_row = response_rows.iloc[0]
+        n_common = int(
+            pd.to_numeric(
+                pd.Series([response_row.get("n_common_tissues")]), errors="coerce"
+            ).fillna(0).iloc[0]
+        )
+        response_cosine = float(
+            pd.to_numeric(
+                pd.Series([response_row.get("cosine_similarity")]), errors="coerce"
+            ).iloc[0]
+        )
+        response_p = float(
+            pd.to_numeric(
+                pd.Series([response_row.get("cosine_permutation_p_value")]),
+                errors="coerce",
+            ).iloc[0]
+        )
+    else:
+        response_cosine = np.nan
+        response_p = np.nan
 
     methylation_estimable = (
         bool(_bool_series(multimodal, "estimable", default=False).any())
@@ -2045,7 +2200,7 @@ def plot_portfolio_multimodal_evidence(
         (
             "Aging and tissue effects",
             "Grouped CV -> clock -> delta_age\n"
-            f"-> tissue effects ({len(rejuv_rows)} tissues; {n_supported} CIs exclude zero)",
+            f"-> tissue effects ({n_tissues} tissues; {n_nominal_ci} nominal CIs exclude zero)",
             AMBER if transcript_available else GRAY,
             "white" if transcript_available else "#f1f5f9",
         ),
@@ -2075,7 +2230,9 @@ def plot_portfolio_multimodal_evidence(
             "Cross-species alignment",
             "Arm contrasts -> tissue matching -> alignment\n"
             + (
-                f"{n_common} tissues; best permutation p={best_p:.3f}"
+                f"{n_common} tissues; C={response_cosine:.2f}, permutation p={response_p:.3f}"
+                if np.isfinite(response_cosine) and np.isfinite(response_p)
+                else f"{n_common} tissues; best permutation p={best_p:.3f}"
                 if np.isfinite(best_p)
                 else f"{n_common} shared tissues"
             ),
@@ -2162,7 +2319,7 @@ def plot_portfolio_multimodal_evidence(
         out_path,
         source,
         "ok",
-        f"transcriptomic tissues={len(rejuv_rows)}; "
+        f"transcriptomic tissues={n_tissues}; "
         f"plasma gate={'pass' if plasma_available else 'blocked'}; valid links={n_valid_links}; "
         f"methylation={methylation_run_status}; shared tissues={n_common}",
     )

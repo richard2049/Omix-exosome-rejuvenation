@@ -86,6 +86,33 @@ def log1p_counts(matrix: pd.DataFrame, assume_counts: bool = True) -> pd.DataFra
     return matrix
 
 
+def log2_cpm_counts(matrix: pd.DataFrame) -> pd.DataFrame:
+    """Convert a feature-by-sample count matrix to ``log2(1 + CPM)``.
+
+    CPM scaling is performed independently within each sample. The function
+    fails closed on missing, non-finite, negative, or zero-total samples.
+    """
+    values = matrix.to_numpy(dtype=np.float64, copy=False)
+    if values.ndim != 2 or not all(values.shape):
+        raise ValueError("log2_cpm_counts requires a non-empty two-dimensional matrix")
+    if not np.isfinite(values).all() or (values < 0).any():
+        raise ValueError("log2_cpm_counts received non-finite or negative values")
+    totals = values.sum(axis=0)
+    if not np.isfinite(totals).all() or (totals <= 0).any():
+        raise ValueError("log2_cpm_counts requires every sample to have a positive total")
+
+    transformed = np.log2(1.0 + values / totals[np.newaxis, :] * 1_000_000.0)
+    result = pd.DataFrame(
+        transformed,
+        index=matrix.index.copy(),
+        columns=matrix.columns.copy(),
+        copy=False,
+    )
+    result.attrs.update(matrix.attrs)
+    result.attrs["representation"] = "log2_cpm"
+    return result
+
+
 def filter_top_variance(matrix: pd.DataFrame, n_top: int) -> pd.DataFrame:
     """
     Keep the top n_top most variable rows (features).
