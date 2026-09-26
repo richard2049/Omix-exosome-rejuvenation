@@ -178,6 +178,24 @@ def test_clustered_sensitivity_uses_animals_as_covariance_clusters():
     assert primary["method"] == "ols_tissue_age_sex_animal_clustered"
 
 
+def test_clustered_sensitivity_is_not_estimable_without_animal_identity():
+    frame = _balanced_fixture()
+    frame["animal_id"] = pd.NA
+
+    result = summarize_clustered_treatment_sensitivity(
+        frame,
+        tissue_col="tissue",
+        group_col="group",
+        animal_col="animal_id",
+        sex_col="sex",
+        age_col="age",
+        contrasts=CONTRASTS,
+        min_animals_per_group=3,
+    )
+
+    assert result.empty
+
+
 def test_tissue_figure_counts_only_the_primary_contrast(tmp_path):
     results_dir = tmp_path / "results"
     figures_dir = tmp_path / "figures"

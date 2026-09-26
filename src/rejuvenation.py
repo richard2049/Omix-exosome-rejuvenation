@@ -646,10 +646,15 @@ def summarize_clustered_treatment_sensitivity(
         tissue_col=tissue_col,
         sex_col=sex_col,
     )
+    if frame.empty:
+        return pd.DataFrame()
     if age_col not in meta_with_delta.columns:
         raise ValueError(f"Missing required clustered-sensitivity age column: {age_col}")
     age_map = meta_with_delta[[animal_col, age_col]].copy()
+    age_map = age_map.dropna(subset=[animal_col])
     age_map[animal_col] = age_map[animal_col].astype(str)
+    valid_animals = set(frame[animal_col].astype(str))
+    age_map = age_map.loc[age_map[animal_col].isin(valid_animals)]
     age_map[age_col] = pd.to_numeric(age_map[age_col], errors="coerce")
     age_conflicts = age_map.dropna().groupby(animal_col, observed=True)[age_col].nunique()
     if (age_conflicts > 1).any():
