@@ -105,7 +105,11 @@ from .linkage_audit import (
     build_estimability_report,
     load_validated_plasma_linkage_manifest,
 )
-from .reason_codes import PLASMA_LINKAGE_CONFIDENCE_MISSING, annotate_reason_fields
+from .reason_codes import (
+    METHOD_RUNTIME_FAILURE,
+    PLASMA_LINKAGE_CONFIDENCE_MISSING,
+    annotate_reason_fields,
+)
 
 logger = get_logger(__name__)
 
@@ -2957,6 +2961,23 @@ def run(cfg: PipelineConfig) -> None:
         except Exception as e:
             logger.warning("Translational insights skipped due to compatibility issue: %s", str(e))
             insights = None
+            # An enabled module must never fail silently: leave a structured
+            # non-available row so downstream consumers and CI can triage it.
+            cfg.results_dir.mkdir(parents=True, exist_ok=True)
+            translation_stub = _ensure_standard_schema(
+                pd.DataFrame([{"module": "translational_insights"}]),
+                available=False,
+                estimable=False,
+                reason=f"Translational module enabled but failed: {e}",
+                reason_code=METHOD_RUNTIME_FAILURE,
+                n_used=0,
+                method="translation_module",
+                ci_low=np.nan,
+                ci_high=np.nan,
+                evidence_level=0,
+            )
+            translation_stub = annotate_reason_fields(translation_stub)
+            translation_stub.to_csv(cfg.results_dir / "translational_insights.csv", index=False)
     else:
         logger.info("Translational module disabled by config (enable_translation_module=False).")
     # Optional save (keep simple and always safe)

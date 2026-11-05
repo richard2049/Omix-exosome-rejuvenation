@@ -173,6 +173,7 @@ def compute_mouse_exosome_tissue_effects(
     n_permutations: int = 1000,
     random_state: int = 42,
     return_sample_outcomes: bool = False,
+    cv_group_col: Optional[str] = None,
 ) -> pd.DataFrame | Tuple[pd.DataFrame, pd.DataFrame]:
     rows = []
     outcome_frames = []
@@ -202,6 +203,13 @@ def compute_mouse_exosome_tissue_effects(
 
     meta = meta.copy()
     meta[sample_id_col] = meta[sample_id_col].astype(str)
+
+    # Clock evaluation unit: prefer the requested biological grouping column
+    # when the metadata actually carries it; otherwise evaluate at sample level
+    # and declare that honestly in the output table.
+    effective_cv_group_col: Optional[str] = None
+    if cv_group_col is not None and cv_group_col in meta.columns:
+        effective_cv_group_col = cv_group_col
 
     for tissue, sub in meta.groupby(tissue_col):
         sample_ids = [sid for sid in sub[sample_id_col].tolist() if sid in expr_log.columns]
@@ -233,6 +241,8 @@ def compute_mouse_exosome_tissue_effects(
                         "permutation_p_value": np.nan,
                         "clock_cv_mae": np.nan,
                         "clock_cv_spearman": np.nan,
+                        "clock_cv_strategy": "not_trained",
+                        "clock_cv_unit": "not_trained",
                         "available": False,
                         "estimable": False,
                         "reason": reason,
@@ -248,12 +258,22 @@ def compute_mouse_exosome_tissue_effects(
         try:
             clock, _, metrics = train_transcriptomic_clock(
                 tissue_expr,
-                ref[[sample_id_col, age_col]].copy(),
+                ref[
+                    [sample_id_col, age_col]
+                    + ([effective_cv_group_col] if effective_cv_group_col else [])
+                ].copy(),
                 age_col=age_col,
                 model="ridge",
                 n_splits=min(5, max(2, int(ref[age_col].nunique()))),
                 random_state=random_state,
-                cv_group_col=None,
+                cv_group_col=effective_cv_group_col,
+            )
+            clock_cv_strategy = str(metrics.get("cv_strategy", "KFold"))
+            clock_cv_n_groups = float(metrics.get("cv_n_groups", np.nan))
+            clock_cv_unit = (
+                effective_cv_group_col
+                if effective_cv_group_col and clock_cv_strategy.startswith("GroupKFold")
+                else "sample"
             )
             pred = predict_biological_age(clock, tissue_expr, sub[[sample_id_col]].copy())
             pred = pred.rename(columns={"predicted_age": "predicted_age_mouse"})
@@ -291,6 +311,8 @@ def compute_mouse_exosome_tissue_effects(
                         "permutation_p_value": np.nan,
                         "clock_cv_mae": np.nan,
                         "clock_cv_spearman": np.nan,
+                        "clock_cv_strategy": "clock_failed",
+                        "clock_cv_unit": "clock_failed",
                         "available": False,
                         "estimable": False,
                         "reason": reason,
@@ -321,6 +343,9 @@ def compute_mouse_exosome_tissue_effects(
                         "permutation_p_value": np.nan,
                         "clock_cv_mae": float(metrics.get("MAE", np.nan)),
                         "clock_cv_spearman": float(metrics.get("spearman_r", np.nan)),
+                        "clock_cv_strategy": clock_cv_strategy,
+                        "clock_cv_n_groups": clock_cv_n_groups,
+                        "clock_cv_unit": clock_cv_unit,
                         "available": False,
                         "estimable": False,
                         "reason": (
@@ -361,6 +386,9 @@ def compute_mouse_exosome_tissue_effects(
                     "permutation_p_value": res["permutation_p_value"],
                     "clock_cv_mae": float(metrics.get("MAE", np.nan)),
                     "clock_cv_spearman": float(metrics.get("spearman_r", np.nan)),
+                    "clock_cv_strategy": clock_cv_strategy,
+                    "clock_cv_n_groups": clock_cv_n_groups,
+                    "clock_cv_unit": clock_cv_unit,
                     "available": True,
                     "estimable": True,
                     "reason": "",

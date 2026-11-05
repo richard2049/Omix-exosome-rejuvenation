@@ -28,6 +28,12 @@ def benjamini_hochberg(pvals: np.ndarray) -> np.ndarray:
     """
     Benjamini-Hochberg FDR correction.
 
+    NaN-safe: non-finite p-values produce NaN q-values without contaminating
+    the adjustment of the finite entries (a single NaN must not turn the whole
+    candidate table into NaN). Delegates to the shared, tested implementation
+    in ``rejuvenation`` so every module adjusts identically. The import is
+    local to keep this module importable without scipy/statsmodels.
+
     Parameters
     ----------
     pvals : np.ndarray
@@ -37,18 +43,10 @@ def benjamini_hochberg(pvals: np.ndarray) -> np.ndarray:
     np.ndarray
         q-values
     """
-    pvals = np.asarray(pvals, dtype=float)
-    n = len(pvals)
-    order = np.argsort(pvals)
-    ranks = np.arange(1, n + 1)
+    from .rejuvenation import _benjamini_hochberg
 
-    q_sorted = pvals[order] * n / ranks
-    q_sorted = np.minimum.accumulate(q_sorted[::-1])[::-1]
-    q_sorted = np.clip(q_sorted, 0, 1)
-
-    out = np.empty(n, dtype=float)
-    out[order] = q_sorted
-    return out
+    series = pd.Series(np.asarray(pvals, dtype=float))
+    return _benjamini_hochberg(series).to_numpy()
 
 
 def safe_ttest(a: np.ndarray, b: np.ndarray) -> float:

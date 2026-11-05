@@ -35,8 +35,10 @@ from src.linkage_audit import audit_primate_plasma_linkage, build_estimability_r
 from src.viz import plot_mediation_effects_bar
 from src.reason_codes import (
     AUTHOR_KEY_NOT_REQUIRED,
+    AUTHOR_KEY_REVIEW_REQUIRED,
     CONFIG_DISABLED,
     INSUFFICIENT_LINKED_ANIMALS,
+    METHOD_RUNTIME_FAILURE,
     OMIX007582_SENTRIX_SAMPLE_SHEET_MISSING,
     PLASMA_ANIMAL_LINKAGE_COLLISION,
     PLASMA_BULK_ANIMAL_LINKAGE_MISSING,
@@ -763,6 +765,69 @@ def test_demo_profile_inputs_are_distributed():
 
     for rel_path in expected_assets:
         assert (repo_root / rel_path).is_file(), rel_path
+
+
+@pytest.mark.parametrize(
+    "failure_message",
+    [
+        "injected translation failure for guardrail test",
+        "injected translation failure: missing animal_id",
+    ],
+    ids=["runtime-error", "metadata-keyword-error"],
+)
+def test_enabled_translation_module_failure_writes_structured_stub(failure_message):
+    """An enabled translational module must never fail silently.
+
+    When the module raises, the pipeline must leave a machine-readable
+    non-available row instead of only a log warning with insights=None.
+    """
+    from src import run_pipeline as rp
+
+    repo_root = Path(__file__).resolve().parents[1]
+    with _workspace_tempdir() as tmpdir:
+        tmp_path = Path(tmpdir)
+        cfg = _build_default_config(repo_root, profile="demo")
+        cfg.results_dir = tmp_path / "results"
+        cfg.figures_dir = tmp_path / "figures"
+        cfg.enable_translation_module = True
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError(failure_message)
+
+        original = rp.generate_translational_insights
+        rp.generate_translational_insights = _boom
+        try:
+            rp.run(cfg)
+        finally:
+            rp.generate_translational_insights = original
+
+        stub_path = cfg.results_dir / "translational_insights.csv"
+        assert stub_path.is_file(), "expected a structured non-available stub"
+        stub = pd.read_csv(stub_path)
+        row = stub.iloc[0]
+        assert set(STANDARD_RESULT_COLUMNS).issubset(stub.columns)
+        assert bool(row["available"]) is False
+        assert bool(row["estimable"]) is False
+        assert row["reason_code"] == METHOD_RUNTIME_FAILURE
+        assert row["missing_author_key"] == AUTHOR_KEY_REVIEW_REQUIRED
+        assert int(row["evidence_level"]) == 0
+        assert "injected translation failure" in str(row["reason"])
+
+
+def test_disabled_translation_module_writes_no_stub():
+    from src import run_pipeline as rp
+
+    repo_root = Path(__file__).resolve().parents[1]
+    with _workspace_tempdir() as tmpdir:
+        tmp_path = Path(tmpdir)
+        cfg = _build_default_config(repo_root, profile="demo")
+        cfg.results_dir = tmp_path / "results"
+        cfg.figures_dir = tmp_path / "figures"
+        cfg.enable_translation_module = False
+
+        rp.run(cfg)
+
+        assert not (cfg.results_dir / "translational_insights.csv").exists()
 
 
 def test_demo_methylation_asset_is_parseable_csv():

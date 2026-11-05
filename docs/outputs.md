@@ -109,6 +109,30 @@ explicit. See [the refresh audit](data_refresh.md).
 | `omix007582_sample_map_summary.csv` | Mammal40 mapping audit |
 | `omix009284_audit_summary.csv` | PBMC single-cell structural audit |
 
+### Optional QA reporting
+
+Mouse tissue-clock rows report `clock_cv_strategy` and `clock_cv_unit`; trained
+clock rows also report `clock_cv_n_groups`. Direct callers of
+`compute_mouse_exosome_tissue_effects` may explicitly request grouping with
+`cv_group_col`. Grouped evaluation requires a usable metadata grouping column;
+otherwise sample-level `KFold` is reported. The default pipeline caller does
+not request grouping or infer an animal key from replicate numbers. These
+fields describe clock evaluation, not validation of biological identity or
+animal-aware treatment-effect resampling. Untrained or failed clocks report
+`not_trained` or `clock_failed` rather than a successful CV strategy.
+
+The translational module remains disabled by default. If enabled and its
+invocation fails, the pipeline writes `translational_insights.csv` with
+`available=False`, `estimable=False`, `reason_code=METHOD_RUNTIME_FAILURE`,
+`evidence_level=0`, and the failure description. A disabled invocation does not
+write this failure output. Failure-path coverage does not establish successful
+end-to-end translational integration or validate a target-ranking method.
+
+Demo validation rejects out-of-range numeric probabilities, inverted common
+`ci_low`/`ci_high` intervals, and non-integer evidence levels. Missing numeric
+values remain permitted for non-estimable results. These are technical output
+checks, not a test of biological validity or a change to inferential thresholds.
+
 ## Standard Result Contract
 
 Interpretation-facing tables use the following fields where applicable:
