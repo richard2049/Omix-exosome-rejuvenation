@@ -19,6 +19,20 @@ STANDARD_COLUMNS = {
     "evidence_level",
 }
 
+# Columns holding probabilities must stay within [0, 1]. Anything whose name
+# ends in ``_p_value``/``_q_value`` is also checked automatically.
+PROBABILITY_COLUMN_NAMES = {
+    "p_value",
+    "q_value",
+    "pval",
+    "qval",
+    "p_value_adjusted",
+    "permutation_p_value",
+    "fdr_q_value",
+    "primary_fwer_p_value",
+    "holm_all_contrasts_p_value",
+}
+
 REQUIRED_OUTPUTS = {
     "clock_metrics_primates.csv": {"n_samples", "MAE", "RMSE", "cv_strategy"},
     "rejuvenation_by_tissue.csv": {
@@ -114,6 +128,37 @@ def validate_demo_outputs(results_dir: Path) -> int:
         invalid_levels = sorted(set(levels[~levels.isin(range(5))].tolist()))
         if invalid_levels:
             errors.append(f"{filename}: invalid evidence levels {invalid_levels}")
+        non_integer = sorted(set(levels[levels % 1 != 0].tolist()))
+        if non_integer:
+            errors.append(f"{filename}: non-integer evidence levels {non_integer}")
+
+        if not table.empty:
+            # Probability-like columns must stay within [0, 1] when present.
+            probability_columns = [
+                column
+                for column in table.columns
+                if column in PROBABILITY_COLUMN_NAMES
+                or column.endswith("_p_value")
+                or column.endswith("_q_value")
+            ]
+            for column in probability_columns:
+                values = pd.to_numeric(table[column], errors="coerce").dropna()
+                out_of_range = values[(values < 0.0) | (values > 1.0)]
+                if not out_of_range.empty:
+                    errors.append(
+                        f"{filename}: column {column} has {len(out_of_range)} "
+                        f"values outside [0, 1]"
+                    )
+
+            # Confidence/credible intervals must not be inverted.
+            if {"ci_low", "ci_high"}.issubset(table.columns):
+                ci_low = pd.to_numeric(table["ci_low"], errors="coerce")
+                ci_high = pd.to_numeric(table["ci_high"], errors="coerce")
+                inverted = int((ci_low > ci_high).sum())
+                if inverted:
+                    errors.append(
+                        f"{filename}: ci_low > ci_high in {inverted} rows"
+                    )
 
     if errors:
         details = "\n - ".join(errors)
