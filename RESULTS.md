@@ -1,33 +1,20 @@
 # Results: What the Public OMIX Data Currently Support
 
-This document reports the corrected September 2026 full-data rerun. The clock,
-treatment contrasts, plasma analyses, cross-species response profile,
-estimability outputs, and public figures reflect the corrected animal-level
-analysis and linkage checks. The [September evidence snapshot](docs/evidence/2026-09-26/README.md)
-provides the aggregate tables and a sanitized run manifest with input hashes,
-configuration, software versions, and the recorded source state.
-
-Historical naming-based plasma–tissue correlations and mediation estimates are
-not treated as current results because cross-modal identity remains
-unconfirmed. See [the refresh audit](docs/data_refresh.md) for source
-reconciliation and [the reproducibility guide](docs/reproducibility.md) for the
-current execution contract.
+These results come from the corrected September 2026 full-profile run. The
+[evidence snapshot](docs/evidence/2026-09-26/README.md) contains the aggregate
+tables and run provenance. The [source audit](docs/data_refresh.md) documents
+how public records were reconciled.
 
 ## Executive Interpretation
 
-The controls-only clock captures age-associated expression in held-out animals,
-but the corrected SRC-versus-vehicle analysis does not support robust
-transcriptomic-clock rejuvenation. The global point estimate is slightly
-older-like and uncertain, and no tissue survives the prespecified family-wise
-correction.
+The controls-only clock tracked chronological age in held-out animals. The
+SRC-versus-vehicle estimate was slightly older-like and uncertain. None of
+the 39 tissues met the prespecified family-wise threshold.
 
-That negative primary result does not make the multimodal analysis empty.
-Within plasma, SRC samples show an uncertain younger-like displacement on a
-reference-trained protein axis and many treatment-associated proteins. Across
-species, the macaque whole-cell and mouse SRC-Exo tissue responses have a
-positive but imprecise directional alignment. Together these results motivate
-specific follow-up hypotheses, while neither establishes rejuvenation,
-mediation, cargo transfer, or an exosome-attributable fraction.
+The plasma protein score shifted toward the young reference, and the macaque
+SRC and mouse SRC-exosome responses showed some directional agreement. Both
+estimates were imprecise and remain exploratory. The available data leave
+mediation, cargo transfer, and the fraction attributable to exosomes unresolved.
 
 ## 1. Transcriptomic Aging Signal
 
@@ -55,7 +42,7 @@ treatment effects.
 Evidence from the [clock metrics](docs/evidence/2026-09-26/clock_metrics_primates.csv)
 and [fold audit](docs/evidence/2026-09-26/clock_fit_audit_primates.csv).
 
-## 2. Tissue Rejuvenation
+## 2. Tissue Treatment Contrasts
 
 The tissue analysis estimates animal-level treated-versus-control differences
 in cross-fitted `delta_age`. The global contrasts are uncertain:
@@ -73,9 +60,9 @@ nominal permutation `p < 0.05`, and no tissue passes the prespecified primary
 family-wise correction. These are prioritization signals, not confirmed
 tissue-specific rejuvenation or aging effects.
 
-Differences in tissue sample size are represented through uncertainty and the
-reported `n_ctrl` and `n_trt`; effects are not rescaled by sample size. The
-`signal_to_uncertainty` field is a prioritization aid, not a second effect size.
+The table reports the numbers of control and treated animals for each tissue.
+For follow-up, `signal_to_uncertainty` divides the effect magnitude by the
+confidence interval width.
 
 Evidence from the [global contrasts](docs/evidence/2026-09-26/global_rejuvenation_summary.csv)
 and [tissue contrasts](docs/evidence/2026-09-26/rejuvenation_by_tissue.csv).
@@ -94,15 +81,14 @@ old-versus-young reference gap itself has an interval crossing zero, so this
 directional signal is exploratory and its ratio to the reference gap is not a
 rejuvenation fraction.
 
-For the primary `GES - V` protein contrast, 1,333 of 3,047 tested accessions
-pass within-contrast BH FDR; the 250 highest-ranked candidates subjected to
-bootstrap stability testing retain their direction. Strong associations
-include lower TLN1 and higher APOC1B, IGFBP2, APOA2, and ALOX15 in GES. The
-scale of this signal makes the plasma dataset biologically interesting, but
-the groups contain only eight samples each and the exact upstream normalization
-of OMIX007581 remains `SOURCE_VERIFICATION_PENDING`. These are exploratory
-treatment-associated protein candidates, not validated aging biomarkers or
-therapeutic targets.
+In the primary `GES - V` contrast, 1,333 of 3,047 protein accessions met the
+Benjamini–Hochberg false discovery rate threshold for that contrast. All 250
+candidates selected for bootstrap
+stability testing retained the direction of their estimated difference.
+Associations included lower TLN1 and higher APOC1B, IGFBP2, APOA2, and ALOX15 in
+GES. Each group contains eight samples, and the original normalization of
+OMIX007581 remains unverified (`SOURCE_VERIFICATION_PENDING`). The protein
+associations remain exploratory.
 
 Evidence from the [linkage audit](docs/evidence/2026-09-26/linkage_qc_report.csv),
 [plasma axis summary](docs/evidence/2026-09-26/plasma_age_axis_summary.csv),
@@ -111,26 +97,22 @@ and [primary protein contrast summary](docs/evidence/2026-09-26/plasma_primary_c
 
 ## 4. Linked Mediation
 
-The current linkage tier is `unlinked`: zero treated and zero control animals
-have confirmed high-confidence overlap between plasma and bulk tissue data.
-The [estimability gate](docs/evidence/2026-09-26/estimability_report.csv) records
-`PLASMA_BULK_ANIMAL_LINKAGE_MISSING`. The [mediation output](docs/evidence/2026-09-26/mediation_summary.csv)
-records `CONFIG_DISABLED` because the full run used the default setting with
-mediation disabled. Both records report zero linked animals and no estimate.
+The [linkage check](docs/evidence/2026-09-26/estimability_report.csv) reports
+zero confirmed animal links and records `PLASMA_BULK_ANIMAL_LINKAGE_MISSING`.
+The [mediation output](docs/evidence/2026-09-26/mediation_summary.csv) records
+`CONFIG_DISABLED`, the default setting used for the full run.
 
-Earlier naming-based mediation estimates are retained only in repository
-history for provenance; they are not current scientific evidence. A validated
-plasma-to-animal key would make a statistical mediation analysis technically
-possible, but causal interpretation would still require its identifying
-assumptions and would not automatically estimate an exosome-attributable
-fraction.
+Earlier estimates based on sample names are retained in the repository history.
+A validated animal key would let the workflow assess whether mediation is
+estimable. A causal interpretation would still require the assumptions in
+the [inference framework](docs/inference_framework.md).
 
 ## 5. Cross-Species Exosome Alignment
 
 The primary response profile compares three organ-compatible pairs—kidney,
 liver, and skeletal muscle—and excludes whole mouse brain versus macaque
-hippocampus from the primary summary. Kidney and muscle are directionally
-aligned; liver is discordant.
+hippocampus from the primary summary. Kidney and muscle point in the same
+direction across species. Liver points in opposite directions.
 
 | Component | Estimate | Uncertainty / test |
 |---|---:|---|
@@ -138,12 +120,8 @@ aligned; liver is discordant.
 | Relative response magnitude (R) | 2.56 | 95% bootstrap CI 0.55 to 5.51 |
 | Aligned response coefficient (A = C × R) | 1.87 | 95% bootstrap CI -2.01 to 3.09; permutation `p = 0.061` |
 
-The positive point estimates are compatible with partial directional
-resemblance, but the intervals are broad, the result depends on only three
-tissues, and no permutation test reaches the conventional 0.05 threshold.
-Cross-species alignment therefore supports a testable exosome-related
-hypothesis, not a robust concordance claim, quantitative transfer estimate, or
-causal exosome fraction in macaques.
+The direction and alignment intervals both cross zero. The comparison
+generates a hypothesis about shared responses across the three tissues.
 
 Evidence from the [response profile](docs/evidence/2026-09-26/cross_species_response_alignment_summary.csv),
 [three tissue pairs](docs/evidence/2026-09-26/cross_species_response_alignment_by_tissue.csv),
@@ -151,12 +129,10 @@ and [causal attribution status](docs/evidence/2026-09-26/exosome_fraction_summar
 
 ## 6. Orthogonal Validation
 
-Biological methylation validation is not currently estimable. The released
-Mammal40 beta matrix uses technical Sentrix identifiers, while the public files
-available to this project do not provide the required mapping to biological
-sample, tissue, group, sex, and age. The workflow records this as
-`OMIX007582_SENTRIX_SAMPLE_SHEET_MISSING` instead of applying an order-based
-join.
+Methylation validation requires a map from the Mammal40 matrix's technical
+Sentrix identifiers to biological sample, tissue, group, sex, and age.
+The map is unavailable, so the workflow records
+`OMIX007582_SENTRIX_SAMPLE_SHEET_MISSING`.
 
 `OMIX009284` is auditable as PBMC single-cell RNA data, but its PBMC-only scope
 does not resolve cross-tissue exosome attribution. It remains a candidate for a
@@ -178,8 +154,6 @@ The corrected observations favor three specific follow-up questions:
    cross-species response profile, and can a validated animal key support
    plasma-to-tissue association?
 
-These questions become more concrete with OMIX009654 and OMIX009655, but their
-preparation labels must be resolved before treatment contrasts. None requires
-creating a new composite causal score. The [author questions](docs/data_refresh.md)
-target the feature identities and individual links needed for stronger
-molecular and animal-level inference.
+Treatment contrasts for OMIX009654 and OMIX009655 require verified preparation
+labels. The [source audit](docs/data_refresh.md) lists the missing feature
+identities, preparation labels, and animal-level links.

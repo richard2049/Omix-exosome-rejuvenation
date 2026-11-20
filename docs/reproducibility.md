@@ -23,34 +23,28 @@ run used Windows and recorded the following numerical stack in its manifest.
 |---|---|---|---|---|---|
 | 3.11.15 | 2.4.3 | 1.17.1 | 2.3.3 | 1.8.0 | 0.14.6 |
 
-The development recipe is solved at installation. The historical manifest
-records the core package versions, but the complete Conda build list and pip
-artifacts for that run are unavailable. For a future reviewed run, capture
-both exports from the exact environment used for analysis, before updating it:
+Conda resolves the development recipe at installation. The September manifest
+captures core versions. The complete Conda build list and pip artifacts for
+that run are unavailable. For future full runs, export the analysis environment:
 
 ```bash
 conda list --name srsc --explicit --md5 > conda-explicit.txt
 conda env export --name srsc > environment-resolved.yml
 ```
 
-Record the platform with these files. Review package URLs and local paths before
-sharing. Recreate the Conda packages on the same platform with
-`conda create --name srsc-replay --file conda-explicit.txt`. If the environment
-export has a `pip:` section, install those pinned packages separately and
-validate the recreated environment before relying on it. Conda's explicit export
-records builds and checksums without introducing a second dependency-management
-tool. An export from today's development environment describes today's setup.
+Record the platform and review package URLs and local paths before sharing.
+Restore the same Conda builds and checksums on that platform with
+`conda create --name srsc-replay --file conda-explicit.txt`. Install any pinned
+packages listed under `pip:` separately, then validate the restored environment.
 [Conda environment documentation](https://docs.conda.io/projects/conda/en/stable/user-guide/tasks/manage-environments.html).
 
 ## Data Profiles
 
-The pipeline has one entry point and three data-selection profiles.
-
-| Profile | Inputs and availability | Analysis and output scope | Use for reported results |
-|---|---|---|---|
-| `demo --safe` | Synthetic examples bundled in `data/PROCESSED/` | Laptop smoke test with reduced feature and resampling settings. Outputs exercise the table contracts, including records for unavailable analyses. | Checks software behavior. It produces demo figures and statistics. |
-| `full` | Separately downloaded datasets and prepared inputs described in the [dataset guide](datasets.md) | Standard animal-level fits and resampling. Generates the full set of result tables and diagnostics allowed by the input and identity checks. | This is the profile required to recompute the reported analyses. Match input hashes, settings, and source state. |
-| `auto` (default) | Looks for the full profile's bulk input first, then the demo input | Uses the configuration of the selected profile. Check the resolved `data_profile` in the run manifest. | Use an explicit profile for verification so the input selection is clear. |
+| Profile | Input | Purpose |
+|---|---|---|
+| `demo --safe` | Bundled synthetic examples | Smoke test with reduced feature and resampling settings. Exercises the output tables and records unavailable analyses. |
+| `full` | Downloaded and prepared files from the [dataset guide](datasets.md) | Standard fits, resampling, and diagnostics. Recompute the reported analyses with matching inputs and settings. |
+| `auto` (default) | Looks for the full profile's bulk input first, then the demo input | Runs the selected profile. Check `data_profile` in the manifest to verify the selection. |
 
 The main commands are:
 
@@ -73,21 +67,10 @@ of the local source tree. On exit it is finalized as `completed` or `failed`
 and inventories the outputs present at finalization. Start with empty output
 directories so earlier artifacts cannot enter the inventory.
 
-For the audited full-profile release, `OMIX007580-01.txt` is loaded through a
-version-bound contract rather than the generic feature-indexed matrix reader.
-The contract verifies the matrix and metadata SHA-256 values, all 2,059 sample
-headers, 23,716 regular integer-count records, and the exact checksum of the
-single quarantined physical record. Retained rows receive stable anonymous
-source-line identifiers; these identifiers must not be treated as genes. A
-successful full run writes the verification record to
-`results/omix007580_input_audit.csv`.
-
-The ingestion correction was first validated independently of model fitting
-and was then incorporated into the completed standard full-profile run of
-26 September 2026. The reported full-profile results were generated from this
-corrected 2,059-sample input. The [September evidence snapshot](evidence/2026-09-26/README.md)
-exposes its resolved configuration, source fingerprint, environment, and
-selected outputs.
+The [OMIX007580 input checks](datasets.md#omix007580-release-specific-ingestion)
+verify the matrix and metadata hashes before loading. The audit is written to
+`results/omix007580_input_audit.csv`. The [September evidence snapshot](evidence/2026-09-26/README.md)
+contains the recorded configuration, source fingerprints, and selected outputs.
 
 The corrected full-profile clock protocol uses `log2(1 + CPM)` and fits Ridge
 only on the untreated reference groups `Y_C`, `M_C`, `O_C`, and `O_V`.
@@ -174,16 +157,8 @@ git pull --ff-only
 git worktree add ../Omix-exosome-rejuvenation-dev -b analysis/my-change main
 ```
 
-Full OMIX inputs should remain outside version control in a read-only local
-data directory. Point the canonical checkout to that directory explicitly:
-
-```bash
-python -m src.run_pipeline --profile full --data-root /path/to/omix-data
-```
-
-Do not commit machine-specific absolute paths. A second directory on the same
-disk is a convenience copy, not a data backup; maintain a separately stored,
-checksum-verified backup of irreplaceable source data.
+Keep full OMIX inputs in a read-only directory outside version control.
+Maintain a separate checksum-verified backup of irreplaceable source data.
 
 ## Validation
 
@@ -193,7 +168,7 @@ Run the focused scientific guardrail suite:
 python -m pytest -q tests/test_scientific_guardrails.py
 ```
 
-Run the pipeline and then regenerate the interpretation-facing report layer:
+Run the demo and generate the report figures:
 
 ```bash
 python -m src.run_pipeline --profile demo --safe
@@ -201,19 +176,13 @@ python -m src.demo_validation
 python -m src.report_figures
 ```
 
-`src.demo_validation` checks that the demo generated the expected result tables
-and preserved their machine-readable evidence fields. It does not assess
-biological validity or upgrade any evidence claim.
+`src.demo_validation` checks the result tables and their evidence fields.
+`src.report_figures` renders figures from the existing CSVs.
 
-The report command reads existing `results/*.csv`; it does not recompute the
-analysis or replace diagnostic plots.
-
-Pull requests and updates to `main` run compilation, the complete test suite,
-the safe demo, and its output validator in the activated Conda environment.
-Updates to `release/**` branches run the same checks on the exact pushed commit.
-These checks cover the software path and result schemas. Scientific judgments
-about the study design, metadata, and causal interpretation require separate
-review. [Technical integrity workflow](https://github.com/richard2049/Omix-exosome-rejuvenation/actions/workflows/ci.yml).
+CI compiles the source, runs all tests, then runs and checks the demo in Conda.
+It runs for pull requests to `main` and pushes to `main` or `release/**`.
+A branch push checks out the exact pushed SHA. These checks cover software
+behavior. [Technical integrity workflow](https://github.com/richard2049/Omix-exosome-rejuvenation/actions/workflows/ci.yml)
 
 For a full-profile comparison, verify the nine data-root inputs against the
 [recorded checksums](evidence/2026-09-26/manifest.json) and verify the two config
@@ -225,15 +194,8 @@ hashes identify the archived files. Any comparison using a different source
 state or environment should state the differences and report numerical agreement
 explicitly. See [release provenance](release.md) for the historical source limits.
 
-When preparing a public release from reviewed full-profile results, refresh the
-three tracked README figures explicitly:
-
-```bash
-python -m src.report_figures --portfolio-assets-dir docs/assets
-```
-
-Do not publish these snapshots from a reduced demo run unless they are clearly
-labelled as demo outputs.
+See [figure provenance](assets/README.md) for regenerating the three README
+figures from reviewed full-profile results.
 
 ## Optional Audit Workflows
 

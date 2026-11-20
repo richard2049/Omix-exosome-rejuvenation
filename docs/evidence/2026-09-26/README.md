@@ -15,14 +15,12 @@ versions, source state, and SHA-256 and size of each included file. The
 | Exploratory macaque–mouse comparison | [Summary](cross_species_response_alignment_summary.csv), [three tissue pairs](cross_species_response_alignment_by_tissue.csv), [causal attribution status](exosome_fraction_summary.csv) |
 | Methylation validation status | [Multimodal concordance status](multimodal_concordance_summary.csv) |
 
-The CSVs are byte-for-byte copies of the archived pipeline outputs listed in
-the original run inventory. The protein contrast JSON is derived from the
-checksum-verified `plasma_biomarkers.csv`. It uses estimable `GES_vs_V` rows,
-counts `fdr_significant` and `stability_tested` flags, and counts stability-tested
-rows with `sign_agreement == 1`. It lists the accession and direction for each
-of the five gene names discussed in RESULTS. The original protein table,
-raw datasets, per-animal predictions, and per-sample linkage tables remain
-outside this snapshot.
+The CSVs match the archived pipeline outputs byte for byte. The protein
+contrast summary uses estimable `GES_vs_V` rows from the checksum-verified
+`plasma_biomarkers.csv`. It counts `fdr_significant` and `stability_tested`
+flags, including the number of stability-tested rows with `sign_agreement == 1`,
+and lists the accessions and directions reported in RESULTS. The full protein
+table, individual predictions, and per-sample linkage records stay with the run.
 
 Input accessions and acquisition notes are in the [dataset guide](../../datasets.md).
 The [OMIX data-use policy](https://ngdc.cncb.ac.cn/omix/term_and_policy?lang=en_GB)
@@ -50,10 +48,7 @@ PY
 ```
 
 On PowerShell, `Get-FileHash -Algorithm SHA256` can also check individual files.
-The manifest is a public projection of `results/run_manifest.json` from the
-archived run. It replaces machine-specific paths with file names and relative
-locations, omits the working-directory and executable details, and retains the
-original manifest hash and recorded source fingerprints. The
-[reproducibility guide](../../reproducibility.md#data-profiles) explains how to
-verify a new execution. See [release provenance](../../release.md) for the
-historical source and environment limits.
+The public manifest uses relative paths and retains the archived manifest hash
+and source fingerprints. See the [reproducibility guide](../../reproducibility.md#data-profiles)
+to verify a new run and the [release notes](../../release.md) for the limits of
+recreating the September run.
