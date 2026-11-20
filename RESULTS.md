@@ -2,9 +2,10 @@
 
 This document reports the corrected September 2026 full-data rerun. The clock,
 treatment contrasts, plasma analyses, cross-species response profile,
-estimability outputs, and public figures were all regenerated under the current
-animal-level and fail-closed linkage contracts. The run is bound to its exact
-inputs, configuration, Git state, and outputs in `results/run_manifest.json`.
+estimability outputs, and public figures reflect the corrected animal-level
+analysis and linkage checks. The [September evidence snapshot](docs/evidence/2026-09-26/README.md)
+provides the aggregate tables and a sanitized run manifest with input hashes,
+configuration, software versions, and the recorded source state.
 
 Historical naming-based plasma–tissue correlations and mediation estimates are
 not treated as current results because cross-modal identity remains
@@ -51,7 +52,8 @@ boundary selection and calibration compression remain important limitations.
 It does not, by itself, prove biological rejuvenation or establish causal
 treatment effects.
 
-Source: `results/clock_metrics_primates.csv`.
+Evidence from the [clock metrics](docs/evidence/2026-09-26/clock_metrics_primates.csv)
+and [fold audit](docs/evidence/2026-09-26/clock_fit_audit_primates.csv).
 
 ## 2. Tissue Rejuvenation
 
@@ -75,8 +77,8 @@ Differences in tissue sample size are represented through uncertainty and the
 reported `n_ctrl` and `n_trt`; effects are not rescaled by sample size. The
 `signal_to_uncertainty` field is a prioritization aid, not a second effect size.
 
-Sources: `results/rejuvenation_by_tissue.csv` and
-`figures/report/report_tissue_rejuvenation_forest.png`.
+Evidence from the [global contrasts](docs/evidence/2026-09-26/global_rejuvenation_summary.csv)
+and [tissue contrasts](docs/evidence/2026-09-26/rejuvenation_by_tissue.csv).
 
 ## 3. Plasma State and Linkage
 
@@ -102,16 +104,19 @@ of OMIX007581 remains `SOURCE_VERIFICATION_PENDING`. These are exploratory
 treatment-associated protein candidates, not validated aging biomarkers or
 therapeutic targets.
 
-Sources: `results/linkage_qc_report.csv`,
-`results/plasma_age_axis_summary.csv`, and
-`results/plasma_age_axis_delta_age_correlation.csv`.
+Evidence from the [linkage audit](docs/evidence/2026-09-26/linkage_qc_report.csv),
+[plasma axis summary](docs/evidence/2026-09-26/plasma_age_axis_summary.csv),
+[correlation status](docs/evidence/2026-09-26/plasma_age_axis_delta_age_correlation.csv),
+and [primary protein contrast summary](docs/evidence/2026-09-26/plasma_primary_contrast_summary.json).
 
 ## 4. Linked Mediation
 
 The current linkage tier is `unlinked`: zero treated and zero control animals
 have confirmed high-confidence overlap between plasma and bulk tissue data.
-The pipeline therefore emits a structured non-estimable mediation record with
-reason code `PLASMA_BULK_ANIMAL_LINKAGE_MISSING`.
+The [estimability gate](docs/evidence/2026-09-26/estimability_report.csv) records
+`PLASMA_BULK_ANIMAL_LINKAGE_MISSING`. The [mediation output](docs/evidence/2026-09-26/mediation_summary.csv)
+records `CONFIG_DISABLED` because the full run used the default setting with
+mediation disabled. Both records report zero linked animals and no estimate.
 
 Earlier naming-based mediation estimates are retained only in repository
 history for provenance; they are not current scientific evidence. A validated
@@ -140,9 +145,9 @@ Cross-species alignment therefore supports a testable exosome-related
 hypothesis, not a robust concordance claim, quantitative transfer estimate, or
 causal exosome fraction in macaques.
 
-Sources: `results/cross_species_response_alignment_summary.csv`,
-`results/cross_species_response_alignment_by_tissue.csv`, and
-`results/exosome_alignment_summary.csv`.
+Evidence from the [response profile](docs/evidence/2026-09-26/cross_species_response_alignment_summary.csv),
+[three tissue pairs](docs/evidence/2026-09-26/cross_species_response_alignment_by_tissue.csv),
+and [causal attribution status](docs/evidence/2026-09-26/exosome_fraction_summary.csv).
 
 ## 6. Orthogonal Validation
 
@@ -157,9 +162,9 @@ join.
 does not resolve cross-tissue exosome attribution. It remains a candidate for a
 separate immune-cell-state analysis.
 
-Sources: `results/multimodal_concordance_summary.csv`,
-`docs/OMIX007582_sample_map_audit.md`, and
-`docs/OMIX009284_audit.md`.
+See the [concordance status](docs/evidence/2026-09-26/multimodal_concordance_summary.csv),
+[Mammal40 sample-map audit](docs/OMIX007582_sample_map_audit.md), and
+[PBMC dataset audit](docs/OMIX009284_audit.md).
 
 ## Biological priorities
 

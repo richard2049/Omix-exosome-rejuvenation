@@ -28,6 +28,10 @@ showing the current controls-only clock, animal-level treatment contrasts,
 zero confirmed plasma links, three-tissue response-alignment profile, and
 structured non-estimability of mediation.
 
+The tracked PNGs match the reviewed report-layer exports. The report was
+regenerated after the pipeline finalized its inventory. The [evidence snapshot](../evidence/2026-09-26/README.md)
+provides the underlying aggregate tables and the scope of the archived hashes.
+
 The older `src.refresh_readme_figures` command remains a historical,
 linkage-only checkpoint utility. It deliberately requires the former
 61-animal baseline and must not be used to publish current primary results.

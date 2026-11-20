@@ -1,0 +1,2 @@
+available,estimable,reason,n_used,method,ci_low,ci_high,evidence_level,n_common_tissues,reason_code,missing_author_key
+False,False,Methylation validation failed: Not enough samples with valid age_proxy_years to train a clock (0 found; need at least ~20).,0,multimodal_concordance,,,0,0,OMIX007582_SENTRIX_SAMPLE_SHEET_MISSING,omix007582_sentrix_barcode_position_to_biological_sample_tissue_group_sex_age

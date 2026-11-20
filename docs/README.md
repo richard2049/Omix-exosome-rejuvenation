@@ -29,6 +29,8 @@ project overview, while [RESULTS](../RESULTS.md) presents the scientific story.
 | [Reproducibility](reproducibility.md) | Environments, data profiles, validation commands, and troubleshooting |
 | [Outputs](outputs.md) | Five output families, complete result inventory, report figures, and interpretation boundaries |
 | [Figure provenance](assets/README.md) | Sources and release rules for the three curated README figures |
+| [September 2026 evidence snapshot](evidence/2026-09-26/README.md) | Selected full-profile results, checksums, and recorded run settings |
+| [Citation and release](release.md) | How to cite the software and prepare a versioned scientific release |
 
 ## Dataset Audits
 

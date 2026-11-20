@@ -46,6 +46,18 @@ mechanistic reference, deferred pending an independence and scope check.
 Raw source data are not distributed through Git and must remain immutable.
 Generated tables and figures belong in `results/` and `figures/`.
 
+### Inputs for the September full run
+
+The [full-run manifest](evidence/2026-09-26/manifest.json) lists the exact
+input filenames and SHA-256 values. Obtain source files from the corresponding
+OMIX accessions. The archived run also used a prepared
+`OMIX007582_beta_matrix.csv` and a two-column `OMIX009283_metadata.csv`.
+The current [mouse metadata helper](../src/omix009283_metadata.py) parses the
+same sample identifiers into a different column schema. Verify prepared
+files against the manifest before claiming an exact input match. The
+[Mammal40 audit](OMIX007582_sample_map_audit.md) describes the methylation files
+and the unresolved biological sample map.
+
 ### OMIX007580 release-specific ingestion
 
 The released `OMIX007580-01.txt` has 2,059 sample identifiers in its header
@@ -60,9 +72,8 @@ value, or non-integer count stops the load.
 This repair restores the first sample previously consumed as a row index; it
 does not recover gene names. A deliberate standard full-profile rerun using
 this corrected 2,059-sample input completed on 26 September 2026. The current
-result tables and public interpretation derive from that run; its exact inputs,
-configuration, source state, and output inventory are recorded in
-`results/run_manifest.json`.
+result tables and public interpretation derive from that run. Its aggregate
+results and sanitized provenance are in the [September evidence snapshot](evidence/2026-09-26/README.md).
 
 ## Reading Dataset Status
 
