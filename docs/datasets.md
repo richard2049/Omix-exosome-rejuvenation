@@ -37,14 +37,52 @@ mechanistic reference, deferred pending an independence and scope check.
 
 ## Data Profiles
 
-- `demo` uses reduced, tracked examples from `data/PROCESSED` and is intended
-  for reproducibility and smoke testing.
+- `demo` uses synthetic, tracked examples from `data/PROCESSED` for software
+  smoke testing.
 - `full` uses locally downloaded source data under `data/RAW/data`.
 - `auto` selects the full profile when those inputs are present and otherwise
   falls back to the demo profile.
 
-Raw source data are not distributed through Git and must remain immutable.
-Generated tables and figures belong in `results/` and `figures/`.
+Obtain full source datasets separately and keep them read-only. Generated
+tables and figures belong in `results/` and `figures/`.
+
+### Demo inputs and redistribution
+
+The demo uses five files generated with a fixed seed and fictional identifiers.
+The methylation example exercises the missing sample-map case. Regenerate the
+files from the repository root with:
+
+```bash
+python -m src.generate_demo_inputs --output-dir data/PROCESSED
+```
+
+The generator reads no source datasets. A reply from OMIX about redistribution
+of the two **historical** extracts below is pending. The source records listed
+open access on 20 November 2026, and OMIX specifies free academic use in its
+[licensing guidance](https://ngdc.cncb.ac.cn/omix/docs?lang=en_GB).
+
+| Historical demo file at `da62d6b` | Verified source and selection |
+|---|---|
+| `OMIX007581-01_example.csv` | First 101 rows and all 34 columns of the deposited `OMIX007581-01.csv`. [OMIX007581](https://ngdc.cncb.ac.cn/omix/release/OMIX007581) |
+| `OMIX007582_beta_matrix_example.csv` | 99 CpG sites and 10 technical sample columns from the locally prepared `OMIX007582_beta_matrix.csv`. [OMIX007582](https://ngdc.cncb.ac.cn/omix/release/OMIX007582) |
+
+Cite [Lei et al., *Cell* (2025)](https://doi.org/10.1016/j.cell.2025.05.021)
+and the relevant accessions when using the source data. The
+[full-run manifest](evidence/2026-09-26/manifest.json) records the source
+file hashes. If permission is confirmed, record the files, permitted uses, and
+attribution terms. The [MIT licence](../LICENSE) covers the project software.
+
+### Inputs for the September full run
+
+The [full-run manifest](evidence/2026-09-26/manifest.json) lists the exact
+input filenames and SHA-256 values. Obtain source files from the corresponding
+OMIX accessions. The archived run also used a prepared
+`OMIX007582_beta_matrix.csv` and a two-column `OMIX009283_metadata.csv`.
+The current [mouse metadata helper](../src/omix009283_metadata.py) parses the
+same sample identifiers into a different column schema. Verify prepared
+files against the manifest before claiming an exact input match. The
+[Mammal40 audit](OMIX007582_sample_map_audit.md) describes the methylation files
+and the unresolved biological sample map.
 
 ### OMIX007580 release-specific ingestion
 
@@ -60,9 +98,8 @@ value, or non-integer count stops the load.
 This repair restores the first sample previously consumed as a row index; it
 does not recover gene names. A deliberate standard full-profile rerun using
 this corrected 2,059-sample input completed on 26 September 2026. The current
-result tables and public interpretation derive from that run; its exact inputs,
-configuration, source state, and output inventory are recorded in
-`results/run_manifest.json`.
+result tables and public interpretation derive from that run. Its aggregate
+results and sanitized provenance are in the [September evidence snapshot](evidence/2026-09-26/README.md).
 
 ## Reading Dataset Status
 

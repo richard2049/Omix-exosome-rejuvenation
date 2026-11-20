@@ -1,4 +1,5 @@
 name: srsc
+# Development and CI recipe. Historical run versions are listed in docs/reproducibility.md.
 channels:
   - conda-forge
   - defaults

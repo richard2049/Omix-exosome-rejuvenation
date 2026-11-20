@@ -1,9 +1,9 @@
 cff-version: 1.2.0
-message: "If you use this code, please cite this repository."
+message: "If you use this software, please cite the repository and include the Git commit or release tag you used."
 title: "OMIX Exosome Rejuvenation: Primate multi-omics evidence and attribution guardrails"
 authors:
   - family-names: "Marín Bautista"
     given-names: "Ricardo"
-date-released: 2025-12-28
-version: "0.1.0"
+type: software
+license: MIT
 repository-code: "https://github.com/richard2049/Omix-exosome-rejuvenation"

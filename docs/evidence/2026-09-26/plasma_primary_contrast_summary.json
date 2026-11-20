@@ -1,0 +1,34 @@
+{
+  "accessions_with_unanimous_bootstrap_direction": 250,
+  "bh_fdr_significant_accessions": 1333,
+  "bootstrap_stability_tested_accessions": 250,
+  "contrast": "GES_vs_V",
+  "protein_candidates_discussed_in_results": [
+    {
+      "direction": "higher_in_GES",
+      "gene_name": "ALOX15",
+      "protein_accession": "A0A2K5VRD0"
+    },
+    {
+      "direction": "higher_in_GES",
+      "gene_name": "APOA2",
+      "protein_accession": "A0A2K5UTH0"
+    },
+    {
+      "direction": "higher_in_GES",
+      "gene_name": "APOC1B",
+      "protein_accession": "P18657"
+    },
+    {
+      "direction": "higher_in_GES",
+      "gene_name": "IGFBP2",
+      "protein_accession": "A0A2K5WZA2"
+    },
+    {
+      "direction": "lower_in_GES",
+      "gene_name": "TLN1",
+      "protein_accession": "A0A2K5VGA4"
+    }
+  ],
+  "tested_accessions": 3047
+}

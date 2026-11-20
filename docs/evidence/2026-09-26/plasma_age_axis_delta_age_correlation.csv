@@ -1,0 +1,2 @@
+available,estimable,reason,reason_code,missing_author_key,n_used,method,ci_low,ci_high,evidence_level,n_animals,spearman_rho
+False,False,Too few linked animals for plasma axis to delta_age correlation (n=0).,INSUFFICIENT_LINKED_ANIMALS,omix007581_plasma_sample_id_to_animal_id_group_sex_age;omix007580_bulk_rnaseq_sample_id_to_animal_id_tissue_group_sex_age,0,linked_plasma_age_axis_delta_age_spearman,,,0,0,

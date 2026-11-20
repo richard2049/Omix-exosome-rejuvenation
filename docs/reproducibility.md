@@ -2,7 +2,7 @@
 
 ## Environment
 
-Create the main environment once:
+Create the development and CI environment:
 
 ```bash
 conda env create -f environment.yml
@@ -15,52 +15,62 @@ If an existing environment must be updated after the specification changes:
 conda env update -n srsc -f environment.yml --prune
 ```
 
+The [environment specification](../environment.yml) uses Python 3.11 and
+OpenBLAS. GitHub Actions tests the public path on Linux. The September full
+run used Windows and recorded the following numerical stack in its manifest.
+
+| Python | NumPy | SciPy | pandas | scikit-learn | statsmodels |
+|---|---|---|---|---|---|
+| 3.11.15 | 2.4.3 | 1.17.1 | 2.3.3 | 1.8.0 | 0.14.6 |
+
+Conda resolves the development recipe at installation. The September manifest
+captures core versions. The complete Conda build list and pip artifacts for
+that run are unavailable. For future full runs, export the analysis environment:
+
+```bash
+conda list --name srsc --explicit --md5 > conda-explicit.txt
+conda env export --name srsc > environment-resolved.yml
+```
+
+Record the platform and review package URLs and local paths before sharing.
+Restore the same Conda builds and checksums on that platform with
+`conda create --name srsc-replay --file conda-explicit.txt`. Install any pinned
+packages listed under `pip:` separately, then validate the restored environment.
+[Conda environment documentation](https://docs.conda.io/projects/conda/en/stable/user-guide/tasks/manage-environments.html).
+
 ## Data Profiles
 
-The pipeline has one entry point and three data-selection profiles:
+| Profile | Input | Purpose |
+|---|---|---|
+| `demo --safe` | Bundled synthetic examples | Smoke test with reduced feature and resampling settings. Exercises the output tables and records unavailable analyses. |
+| `full` | Downloaded and prepared files from the [dataset guide](datasets.md) | Standard fits, resampling, and diagnostics. Recompute the reported analyses with matching inputs and settings. |
+| `auto` (default) | Looks for the full profile's bulk input first, then the demo input | Runs the selected profile. Check `data_profile` in the manifest to verify the selection. |
+
+The main commands are:
 
 ```bash
 python -m src.run_pipeline --profile demo --safe
-python -m src.run_pipeline --profile full
+python -m src.run_pipeline --profile full --data-root /path/to/omix-data
 python -m src.run_pipeline --profile auto
 ```
 
-- `demo` reads reduced public examples from `data/PROCESSED`.
-- `full` reads locally downloaded inputs from `data/RAW/data`.
-- `auto` prefers the full layout when present and otherwise uses the demo
-  layout.
-- `--safe` applies conservative laptop settings: it reduces expression
-  features and resampling counts and disables mediation. Use it for smoke
-  testing, not to reproduce the numerical results reported for the standard
-  full profile.
-- `--data-root <PATH>` overrides the selected profile's data directory without
-  changing source code.
-
-Raw inputs are immutable. Generated tables and figures are written to
-`results/` and `figures/`.
+Without `--data-root`, `full` looks under `data/RAW/data`. Keep raw inputs
+read-only and use separate clean checkouts to keep each run's generated
+`results/` and `figures/` distinct. The archived September full invocation
+took about 7.5 minutes on its Windows host, excluding data preparation and
+report generation. Runtime depends on hardware and the environment.
 
 Every CLI execution starts `results/run_manifest.json` before model fitting.
 It records the command, environment, complete configuration, SHA-256 values of
 configured inputs, Git HEAD, dirty-worktree status, and a content fingerprint
 of the local source tree. On exit it is finalized as `completed` or `failed`
-and inventories the generated outputs. A completed manifest demonstrates which
-code and inputs produced a run; it does not upgrade the biological evidence of
-any result.
+and inventories the outputs present at finalization. Start with empty output
+directories so earlier artifacts cannot enter the inventory.
 
-For the audited full-profile release, `OMIX007580-01.txt` is loaded through a
-version-bound contract rather than the generic feature-indexed matrix reader.
-The contract verifies the matrix and metadata SHA-256 values, all 2,059 sample
-headers, 23,716 regular integer-count records, and the exact checksum of the
-single quarantined physical record. Retained rows receive stable anonymous
-source-line identifiers; these identifiers must not be treated as genes. A
-successful full run writes the verification record to
-`results/omix007580_input_audit.csv`.
-
-The ingestion correction was first validated independently of model fitting
-and was then incorporated into the completed standard full-profile run of
-26 September 2026. The current result tables were regenerated from this
-corrected 2,059-sample input. `results/run_manifest.json` binds that run to its
-inputs, resolved configuration, source state, environment, and output inventory.
+The [OMIX007580 input checks](datasets.md#omix007580-release-specific-ingestion)
+verify the matrix and metadata hashes before loading. The audit is written to
+`results/omix007580_input_audit.csv`. The [September evidence snapshot](evidence/2026-09-26/README.md)
+contains the recorded configuration, source fingerprints, and selected outputs.
 
 The corrected full-profile clock protocol uses `log2(1 + CPM)` and fits Ridge
 only on the untreated reference groups `Y_C`, `M_C`, `O_C`, and `O_V`.
@@ -113,8 +123,6 @@ observing that result.
 Mediation is now disabled by default in every profile. Name-derived plasma
 aliases are `inferred` and fail the existing high-confidence gate even if a
 caller enables mediation. Enabling that flag alone does not validate identity.
-Pre-refresh standard-full mediation numbers in RESULTS are historical and
-conditional on unconfirmed links.
 
 Optional `sample_id`/`animal_id` metadata are likewise treated as
 `unverified_metadata`. Only a dedicated plasma linkage manifest whose SHA-256
@@ -149,26 +157,18 @@ git pull --ff-only
 git worktree add ../Omix-exosome-rejuvenation-dev -b analysis/my-change main
 ```
 
-Full OMIX inputs should remain outside version control in a read-only local
-data directory. Point the canonical checkout to that directory explicitly:
-
-```bash
-python -m src.run_pipeline --profile full --data-root /path/to/omix-data
-```
-
-Do not commit machine-specific absolute paths. A second directory on the same
-disk is a convenience copy, not a data backup; maintain a separately stored,
-checksum-verified backup of irreplaceable source data.
+Keep full OMIX inputs in a read-only directory outside version control.
+Maintain a separate checksum-verified backup of irreplaceable source data.
 
 ## Validation
 
 Run the focused scientific guardrail suite:
 
 ```bash
-pytest -q tests/test_scientific_guardrails.py
+python -m pytest -q tests/test_scientific_guardrails.py
 ```
 
-Run the pipeline and then regenerate the interpretation-facing report layer:
+Run the demo and generate the report figures:
 
 ```bash
 python -m src.run_pipeline --profile demo --safe
@@ -176,27 +176,26 @@ python -m src.demo_validation
 python -m src.report_figures
 ```
 
-`src.demo_validation` checks that the demo generated the expected result tables
-and preserved their machine-readable evidence fields. It does not assess
-biological validity or upgrade any evidence claim.
+`src.demo_validation` checks the result tables and their evidence fields.
+`src.report_figures` renders figures from the existing CSVs.
 
-The report command reads existing `results/*.csv`; it does not recompute the
-analysis or replace diagnostic plots.
+CI compiles the source, runs all tests, then runs and checks the demo in Conda.
+It runs for pull requests to `main` and pushes to `main` or `release/**`.
+A branch push checks out the exact pushed SHA. These checks cover software
+behavior. [Technical integrity workflow](https://github.com/richard2049/Omix-exosome-rejuvenation/actions/workflows/ci.yml)
 
-Pull requests and updates to `main` run the same compilation, test, demo, and
-output-contract checks in GitHub Actions. Passing CI demonstrates technical
-integrity of the public workflow, not biological validity of the underlying
-study design, metadata mappings, or causal interpretation.
+For a full-profile comparison, verify the nine data-root inputs against the
+[recorded checksums](evidence/2026-09-26/manifest.json) and verify the two config
+file hashes from the LF Git blobs. After running `full`, inspect the completed
+manifest for the resolved profile, effective configuration, software versions,
+and source state. Compare the outputs to the snapshot by contrast and tissue
+labels, checking estimates, intervals, counts, and reason codes. The snapshot's
+hashes identify the archived files. Any comparison using a different source
+state or environment should state the differences and report numerical agreement
+explicitly. See [release provenance](release.md) for the historical source limits.
 
-When preparing a public release from reviewed full-profile results, refresh the
-three tracked README figures explicitly:
-
-```bash
-python -m src.report_figures --portfolio-assets-dir docs/assets
-```
-
-Do not publish these snapshots from a reduced demo run unless they are clearly
-labelled as demo outputs.
+See [figure provenance](assets/README.md) for regenerating the three README
+figures from reviewed full-profile results.
 
 ## Optional Audit Workflows
 
@@ -241,7 +240,8 @@ Use `--max-prefixes` or `--prefixes` before attempting the complete archive.
 
 ### The full profile cannot find source files
 
-The public repository contains reduced examples, not the full OMIX downloads.
+The public repository contains synthetic examples. Obtain the full OMIX
+downloads separately.
 Use `--profile demo` to verify the installation, or place independently
 downloaded source files under the configured full-data root and use
 `--profile full`. Do not rename samples or edit raw files to satisfy a loader.

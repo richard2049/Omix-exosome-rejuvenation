@@ -2,7 +2,8 @@ name: Technical integrity
 
 on:
   push:
-    branches: [main]
+    # Release preparation branches run CI on the exact pushed commit.
+    branches: [main, 'release/**']
   pull_request:
     branches: [main]
 

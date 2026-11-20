@@ -1,0 +1,604 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "src.run_pipeline",
+    "--profile",
+    "full",
+    "--data-root",
+    "<data-root>"
+  ],
+  "completed_at_utc": "2026-09-26T12:13:27.775420+00:00",
+  "configuration": {
+    "age_col_candidates": [
+      "agenumb",
+      "age_num",
+      "age_years",
+      "Age (years)",
+      "Age(years)",
+      "age",
+      "Age",
+      "chrono_age",
+      "chronological_age"
+    ],
+    "animal_id_col_candidates": [
+      "animal_id",
+      "AnimalID",
+      "donor_id",
+      "Donor",
+      "subject_id",
+      "Subject",
+      "orig.ident",
+      "orig_ident",
+      "orig.ident.id"
+    ],
+    "clock_cv_folds": 5,
+    "clock_diagnostic_seeds": [
+      17,
+      29,
+      43
+    ],
+    "clock_excluded_sample_ids": [
+      "58-MF-C-Trachea_4"
+    ],
+    "clock_fold_assignments": "config/primate_clock_folds.csv",
+    "clock_fold_assignments_sha256": "666731461817ec5c9e9b9cb3007a62ee328b61a805f0caab2779fc2663bcf98e",
+    "clock_inner_folds": 3,
+    "clock_inner_seed": 20260917,
+    "clock_model": "ridge",
+    "clock_protocol": "reference_nested_ridge",
+    "clock_reference_groups": [
+      "Y_C",
+      "M_C",
+      "O_C",
+      "O_V"
+    ],
+    "clock_ridge_alphas": [
+      0.0001,
+      0.001,
+      0.01,
+      0.1,
+      1.0,
+      10.0,
+      100.0,
+      1000.0,
+      10000.0,
+      100000.0,
+      1000000.0
+    ],
+    "control_label": "Control",
+    "data_profile": "full",
+    "data_root": "<data-root>",
+    "enable_causal_decomposition": true,
+    "enable_mediation": false,
+    "enable_methylation_block": true,
+    "enable_mouse_exosome_block": true,
+    "enable_plasma_age_axis": true,
+    "enable_subset_validation_block": true,
+    "enable_translation_module": false,
+    "exosome_fraction_bootstrap": 2000,
+    "exosome_fraction_method": "correlation_ratio",
+    "exosome_fraction_permutations": 1000,
+    "exosome_min_cells_median_abs": 1e-08,
+    "exosome_min_common_tissues": 3,
+    "figures_dir": "figures",
+    "focus_genes": [
+      "FOXO3",
+      "SRC"
+    ],
+    "gmt_path": null,
+    "group_col_candidates": [
+      "group",
+      "Group",
+      "treatment",
+      "Treatment",
+      "condition",
+      "Condition"
+    ],
+    "linkage_high_conf_values": [
+      "high",
+      "metadata_exact"
+    ],
+    "max_allowed_samples": 5000,
+    "mediation_bootstrap": 500,
+    "methylation_group_age_map": {
+      "M_C": 11.0,
+      "O_C": 17.0,
+      "O_CR": 21.0,
+      "O_GES": 21.0,
+      "O_Met": 21.0,
+      "O_V": 21.0,
+      "O_VC": 21.0,
+      "O_WT": 21.0,
+      "Y_C": 4.5,
+      "Y_WS": 4.5,
+      "Y_WT": 4.5
+    },
+    "methylation_min_common_tissues": 3,
+    "methylation_to_primate_tissue_map": {
+      "Brain": "Hippocampus",
+      "Kidney": "Renal_cortex",
+      "Liver": "Liver_L",
+      "Lung": "Lung_R3_3",
+      "Quadriceps muscle": "Quadriceps_muscle"
+    },
+    "min_samples_for_mediation": 12,
+    "min_samples_per_group_for_rejuv": 2,
+    "mouse_alignment_contrasts": [
+      "GES_vs_Veh",
+      "WT_vs_Veh"
+    ],
+    "mouse_contrasts": [
+      "GES_vs_Veh",
+      "WT_vs_Veh",
+      "GES_vs_WT"
+    ],
+    "mouse_control_labels": [
+      "Veh",
+      "WT",
+      "Ctrl",
+      "Baseline"
+    ],
+    "mouse_exosome_bulk": {
+      "matrix": "<data-root>/OMIX009283-01.txt",
+      "metadata": "<data-root>/OMIX009283_metadata.csv"
+    },
+    "mouse_min_reference_ages": 4,
+    "mouse_min_reference_samples": 20,
+    "mouse_min_samples_per_group": 3,
+    "mouse_reference_arms": [
+      "Baseline"
+    ],
+    "mouse_tissue_bootstrap": 1000,
+    "mouse_tissue_mapping_path": "config/cross_species_tissue_map.csv",
+    "mouse_tissue_permutations": 1000,
+    "mouse_to_primate_tissue_map": {
+      "brain": "Hippocampus",
+      "kidney": "Renal_cortex",
+      "liver": "Liver_L",
+      "lung": "Lung_R3_3",
+      "muscle": "Quadriceps_muscle"
+    },
+    "mouse_treated_label": "GES",
+    "n_bootstrap": 2000,
+    "n_top_features_expr": 0,
+    "n_top_features_proxy": 1000,
+    "n_top_plasma_features": 50,
+    "plasma_axis_min_group_samples": 2,
+    "plasma_axis_min_linked_animals": 8,
+    "plasma_axis_min_non_nan_frac": 0.8,
+    "plasma_axis_old_control_labels": [
+      "O_V",
+      "V"
+    ],
+    "plasma_axis_young_labels": [
+      "Y",
+      "Y_C"
+    ],
+    "plasma_biomarker_bootstrap": 120,
+    "plasma_biomarker_min_pairs": 8,
+    "plasma_biomarker_sign_agreement_min": 0.8,
+    "plasma_biomarker_stability_top_k": 250,
+    "plasma_contrast_min_per_group": 3,
+    "plasma_linkage_manifest": null,
+    "plasma_linkage_manifest_sha256": null,
+    "plasma_primary_contrast": "GES_vs_V",
+    "plasma_ranking_fallback_metric": "variance",
+    "plasma_ranking_requires_spearman": false,
+    "plasma_treatment_contrasts": [
+      [
+        "GES_vs_V",
+        "GES",
+        "V"
+      ],
+      [
+        "WT_vs_V",
+        "WT",
+        "V"
+      ],
+      [
+        "GES_vs_WT",
+        "GES",
+        "WT"
+      ]
+    ],
+    "primate_bulk": {
+      "matrix": "<data-root>/OMIX007580-01.txt",
+      "metadata": "<data-root>/OMIX007580-02.csv"
+    },
+    "primate_bulk_age_col": "age",
+    "primate_bulk_input_mode": "omix007580_anonymous_counts",
+    "primate_bulk_representation": "log2_cpm",
+    "primate_control_labels": [
+      "Y_C",
+      "M_C",
+      "O_C",
+      "O_V"
+    ],
+    "primate_methylation": {
+      "matrix": "<data-root>/OMIX007582_beta_matrix.csv",
+      "metadata": "<data-root>/OMIX007582-02.csv"
+    },
+    "primate_plasma": {
+      "matrix": "<data-root>/OMIX007581-01.csv",
+      "metadata": null
+    },
+    "primate_primary_contrast": "SRC_vs_vehicle",
+    "primate_treated_label": "O_GES",
+    "primate_treatment_contrasts": [
+      [
+        "SRC_vs_vehicle",
+        "O_GES",
+        "O_V"
+      ],
+      [
+        "WTC_vs_vehicle",
+        "O_WT",
+        "O_V"
+      ],
+      [
+        "SRC_vs_WTC",
+        "O_GES",
+        "O_WT"
+      ]
+    ],
+    "primate_vehicle_label": "O_V",
+    "primate_wtc_label": "O_WT",
+    "random_seed": 42,
+    "random_state": 42,
+    "response_alignment_bootstrap": 1000,
+    "response_alignment_permutations": 1000,
+    "results_dir": "results",
+    "sample_id_col_candidates": [
+      "sample_id",
+      "Sample",
+      "sample",
+      "SampleID",
+      "sample_name"
+    ],
+    "sensitivity_top_feature_thresholds": [
+      20,
+      50,
+      100
+    ],
+    "sex_col_candidates": [
+      "sex",
+      "Sex",
+      "gender",
+      "Gender"
+    ],
+    "tissue_col_candidates": [
+      "tissue",
+      "Tissue",
+      "organ",
+      "Organ"
+    ],
+    "tissue_effect_covariates": [
+      "age",
+      "sex",
+      "batch"
+    ],
+    "tissue_weighting": "uniform",
+    "top_genes_per_tissue": 100,
+    "top_plasma_biomarkers": 50,
+    "treatment_n_permutations": 2000
+  },
+  "derived_outputs": [
+    {
+      "file": "plasma_primary_contrast_summary.json",
+      "sha256": "aac51d08e8d3c237769a2697a7a3591940f60625500a927c713b654f575317a9",
+      "size_bytes": 836,
+      "source_output": {
+        "file": "plasma_biomarkers.csv",
+        "sha256": "1180cd8eabe44e7a184c92b1fe64f070e763fcd7c4b62b6c0a74de82a4dacbce",
+        "size_bytes": 5467150
+      }
+    }
+  ],
+  "environment": {
+    "os_family": "Windows",
+    "packages": {
+      "numpy": "2.4.3",
+      "pandas": "2.3.3",
+      "scikit-learn": "1.8.0",
+      "scipy": "1.17.1",
+      "statsmodels": "0.14.6"
+    },
+    "python_version": "3.11.15"
+  },
+  "inputs": [
+    {
+      "exists": true,
+      "file": "config/primate_clock_folds.csv",
+      "label": "clock_fold_assignments",
+      "sha256": "666731461817ec5c9e9b9cb3007a62ee328b61a805f0caab2779fc2663bcf98e",
+      "size_bytes": 1036
+    },
+    {
+      "exists": true,
+      "file": "<data-root>/OMIX009283-01.txt",
+      "label": "mouse_exosome_bulk.matrix",
+      "sha256": "8944760c39f0073675f726e279f8e7920a4bb16faf9aa247ce1155677e0714b5",
+      "size_bytes": 27791544
+    },
+    {
+      "exists": true,
+      "file": "<data-root>/OMIX009283_metadata.csv",
+      "label": "mouse_exosome_bulk.metadata",
+      "sha256": "64949a67ea16d69a934cdbf6e12e616f1b581b0f61040cec452c6a75fe6c4f2d",
+      "size_bytes": 6408
+    },
+    {
+      "exists": true,
+      "file": "config/cross_species_tissue_map.csv",
+      "label": "mouse_tissue_mapping_path",
+      "sha256": "c2fad0f2ea1700576723abef941e8769dc17e875f627bdede3d1611c06076661",
+      "size_bytes": 942
+    },
+    {
+      "exists": true,
+      "file": "<data-root>/OMIX007580-01.txt",
+      "label": "primate_bulk.matrix",
+      "sha256": "4c5405720300b52351033951db55c6dd80807c6ea7abaf44125e20fb4bf2a6f5",
+      "size_bytes": 176789715
+    },
+    {
+      "exists": true,
+      "file": "<data-root>/OMIX007580-02.csv",
+      "label": "primate_bulk.metadata",
+      "sha256": "4717a905deaf76446077c4e5beb85c8d6d5f4e8536afcc37a893f228cd92e159",
+      "size_bytes": 150455
+    },
+    {
+      "exists": true,
+      "file": "<data-root>/OMIX007582_beta_matrix.csv",
+      "label": "primate_methylation.matrix",
+      "sha256": "67535051cdbbdc89c0358753faeea913e9b84ed46ed2a4e543875417d8426c61",
+      "size_bytes": 407062736
+    },
+    {
+      "exists": true,
+      "file": "<data-root>/OMIX007582-02.csv",
+      "label": "primate_methylation.metadata",
+      "sha256": "b6c45cd73c70de57f8766e88c1a091988be32702f1383c538f6fc6f8ef6fabd6",
+      "size_bytes": 32058
+    },
+    {
+      "exists": true,
+      "file": "<data-root>/OMIX007581-01.csv",
+      "label": "primate_plasma.matrix",
+      "sha256": "5e9ee404aed57930910ed3502d9fa22fcf735860aa9defaa19d00495aff4da77",
+      "size_bytes": 1247594
+    },
+    {
+      "exists": true,
+      "file": "<data-root>/OMIX007583-01.zip",
+      "label": "subset_validation.OMIX007583-01.zip",
+      "sha256": "b96dfec8566952c1dc7dfe2e1391ec1142526155fcef731b57e4055ced7cfa82",
+      "size_bytes": 326590914
+    },
+    {
+      "exists": true,
+      "file": "<data-root>/OMIX007586-02.zip",
+      "label": "subset_validation.OMIX007586-02.zip",
+      "sha256": "6f0b4f5d1e29f1c7f139c28c9b7f3f5bef9053ee2fe42e434f40e874f9344308",
+      "size_bytes": 963639224
+    }
+  ],
+  "original_run_manifest_schema_version": 1,
+  "original_run_manifest_sha256": "76c4d44e69bf47cf16ba909fd9306daa5a221408d16b61c32694c0b040acf9f2",
+  "outputs": [
+    {
+      "file": "clock_metrics_primates.csv",
+      "sha256": "2f7d4aad42e2aadeda7df7df6901dd02913bf10c85b70cb7e49fb0858e33f3a5",
+      "size_bytes": 867
+    },
+    {
+      "file": "clock_fit_audit_primates.csv",
+      "sha256": "4646d3e057a45efb7a6bc557bb442621dee4f45c4e47b02723ee6e97920a9798",
+      "size_bytes": 1165
+    },
+    {
+      "file": "global_rejuvenation_summary.csv",
+      "sha256": "7af13424f0737c8f9c688633ad1d829f408e1d1a048f78c0eae6205c5a4c1df9",
+      "size_bytes": 2200
+    },
+    {
+      "file": "rejuvenation_by_tissue.csv",
+      "sha256": "ba62331eb2d63a28bea4eeed5c1b7ea007063c99d0c134b470a88e93e12011bf",
+      "size_bytes": 52254
+    },
+    {
+      "file": "plasma_age_axis_summary.csv",
+      "sha256": "d470aeaed3276ed0ab3738ca546cac72aed99c415cedf1e2c965b734afa68624",
+      "size_bytes": 1528
+    },
+    {
+      "file": "linkage_qc_report.csv",
+      "sha256": "74a603c4fc31ec93042086dd49929d20084565e0b4b5cd24fde2dae4c048a507",
+      "size_bytes": 543
+    },
+    {
+      "file": "plasma_age_axis_delta_age_correlation.csv",
+      "sha256": "c42ff9e9a4df11d38ed775484d91f56d78bbdc093b23eef84bbf05fd40461e8b",
+      "size_bytes": 411
+    },
+    {
+      "file": "estimability_report.csv",
+      "sha256": "cf0b55526469ae3abdb81512a604610bc546b7682fb1fba41468d67a55a6342f",
+      "size_bytes": 650
+    },
+    {
+      "file": "mediation_summary.csv",
+      "sha256": "ad8902e6c8fd163b2ed422e97d6a2c369d53df91343dc1bd0f311531c1c97237",
+      "size_bytes": 270
+    },
+    {
+      "file": "cross_species_response_alignment_summary.csv",
+      "sha256": "ad43bc9ca76c3ef9ca910affdb9e2c25049fc1c82c4db9b43bacb37503117e57",
+      "size_bytes": 1491
+    },
+    {
+      "file": "cross_species_response_alignment_by_tissue.csv",
+      "sha256": "0471b0d7895197b5049cce146bb8c96e165d4cd1bbd78468ce1bb5f7538efb69",
+      "size_bytes": 1165
+    },
+    {
+      "file": "multimodal_concordance_summary.csv",
+      "sha256": "6b99174b3a9f8ac58b274d6aaa1081773f4b8bc3b30f85741cd05fed8cf8c163",
+      "size_bytes": 406
+    },
+    {
+      "file": "exosome_fraction_summary.csv",
+      "sha256": "5d482b407e90907080a4540c7d1468a1123e248fe206629a4f1016f295add620",
+      "size_bytes": 618
+    }
+  ],
+  "profile": "full",
+  "schema_version": 1,
+  "source": {
+    "git_dirty": true,
+    "git_head": "7b49ef43d1e01ea34ea16da930d7107339dc0874",
+    "python_source_files": [
+      {
+        "path": "src/__init__.py",
+        "sha256": "85445a316aaa4e484e564fe92d0afb4dabb033f638c7d090221df4971d1170ff",
+        "size_bytes": 51
+      },
+      {
+        "path": "src/attribution.py",
+        "sha256": "693574a20dfe2e1bdd51bcb25bc78f55415c8b91a5f208323f54ee9b375f4078",
+        "size_bytes": 67964
+      },
+      {
+        "path": "src/clocks.py",
+        "sha256": "180e6ce6c515a7bc60a335db2e627044b53edddc93221daefbca048520a20b87",
+        "size_bytes": 13077
+      },
+      {
+        "path": "src/config.py",
+        "sha256": "5c18300f87751553a2e9e817e22fe60d47cac4ed934b524bb0600f0347013dcd",
+        "size_bytes": 10860
+      },
+      {
+        "path": "src/data_refresh.py",
+        "sha256": "e267e2088e4af5992624ec9d85491c6ae908c500c890ce0f0a047504e03a6518",
+        "size_bytes": 14211
+      },
+      {
+        "path": "src/demo_validation.py",
+        "sha256": "2e79583c4986cbe90382d9edd684b9751c2df577d5c5f2cccdb3ae5d292db984",
+        "size_bytes": 4727
+      },
+      {
+        "path": "src/effect_sizes.py",
+        "sha256": "2aadec89cf24f0917470fd26f0306d65dcb89551728c99b28e30239c86fe2a1e",
+        "size_bytes": 1202
+      },
+      {
+        "path": "src/exosome_effect.py",
+        "sha256": "f6ca580339928bf809ab670705477a94ec1c63dc00cdb8f9f904a7008f85d228",
+        "size_bytes": 11479
+      },
+      {
+        "path": "src/linkage_audit.py",
+        "sha256": "09dea9bd63ebdc8388efabdba29843d188001aab4e723912cef1ada2dae34e1e",
+        "size_bytes": 18213
+      },
+      {
+        "path": "src/logging_utils.py",
+        "sha256": "e233f664bf303ddbb274de30baadf17d2302d46416a45b7d235e8b29ad26be26",
+        "size_bytes": 640
+      },
+      {
+        "path": "src/omix007580.py",
+        "sha256": "0fd7daf689be9160020fd1462c68d52c03cc4d8606b456d2b666ac45ae4f2a71",
+        "size_bytes": 7846
+      },
+      {
+        "path": "src/omix007582_audit.py",
+        "sha256": "551334a3b1bc0a6bc5c6a049d4e37412237b8a9fbf5c00ce077e6ee33012857f",
+        "size_bytes": 11967
+      },
+      {
+        "path": "src/omix009283_metadata.py",
+        "sha256": "fb7699056a2f9b03fbf6df0335d87f9bb3a84d8b4490286c464d7a52b7dfad3c",
+        "size_bytes": 2506
+      },
+      {
+        "path": "src/omix009284_audit.py",
+        "sha256": "253bb3248be68a0e8fb381cf6a76c52cf0f152ec35892baa302dcc58e6b2418a",
+        "size_bytes": 12389
+      },
+      {
+        "path": "src/omix_io.py",
+        "sha256": "256f23c9a7466ed2bffcce7c92792e746ef5d1652056b8338b3dce0073d5803e",
+        "size_bytes": 13386
+      },
+      {
+        "path": "src/plasma_axis.py",
+        "sha256": "af03ed99980d1223b23d1a2e8b630d5506ca8d1e0c3893012e43213c919fdf8f",
+        "size_bytes": 21608
+      },
+      {
+        "path": "src/preprocessing.py",
+        "sha256": "430e75ece9813692dbf3f5dca3d990fb696d3b3f07a84875c757bd450e272303",
+        "size_bytes": 6833
+      },
+      {
+        "path": "src/reason_codes.py",
+        "sha256": "9f2495d939e19e9f570b0ec43e297300be51ffea1a6e51669971e80d04c50712",
+        "size_bytes": 10460
+      },
+      {
+        "path": "src/reference_clock.py",
+        "sha256": "5828e1f5c2d536e959c4ae3c40a94ed2dbee1af4a62ec388ee7556144d286522",
+        "size_bytes": 21469
+      },
+      {
+        "path": "src/refresh_readme_figures.py",
+        "sha256": "3924c8facb669c7699a835c56dbab49211255242f9169bff7418421cc85451d9",
+        "size_bytes": 5374
+      },
+      {
+        "path": "src/rejuvenation.py",
+        "sha256": "a133fc85b646d8be03dace59d28f3b77ba84b529ff43e3dbb48cabd0781c021e",
+        "size_bytes": 53298
+      },
+      {
+        "path": "src/report_figures.py",
+        "sha256": "9d08d6cf2f6d534eb4ef387c7ea704f50b6789ba338af8feef79f8e075036fc7",
+        "size_bytes": 105081
+      },
+      {
+        "path": "src/run_pipeline.py",
+        "sha256": "495564cad84658c892c6b989e2e411de4fdb141e180e5574e2f7507487acd703",
+        "size_bytes": 133228
+      },
+      {
+        "path": "src/run_provenance.py",
+        "sha256": "85c27e75b9f106f55c0d27778be9f3c96fbb75bfd0c0f06004a1e257fb340fbb",
+        "size_bytes": 8434
+      },
+      {
+        "path": "src/scripts/process_OMIX007582_Mammal40.R",
+        "sha256": "f176be6dace0dc76b19b864daa4fa6b3e430a9034bbff0de035ef4a465550e5c",
+        "size_bytes": 19102
+      },
+      {
+        "path": "src/translation_module.py",
+        "sha256": "399e474640fdb7cbb77cc658568d91c81c800a6186c23f233f978d5b46d2c1ba",
+        "size_bytes": 14982
+      },
+      {
+        "path": "src/viz.py",
+        "sha256": "175724591a66f01d6e63f7aab71d0c3b78d6fa8b72696fcb8e1b220f83bb6189",
+        "size_bytes": 17054
+      }
+    ],
+    "source_file_count": 110,
+    "source_tree_sha256": "b01ed28609635a3de0b4714ad034c18581641712904865422807fa15d4710fdf"
+  },
+  "started_at_utc": "2026-09-26T12:05:59.333410+00:00",
+  "status": "completed"
+}

@@ -1,0 +1,2 @@
+n_plasma_total,n_mapped_non_null,n_mapped_high_conf,n_mapped_valid_in_bulk,n_unresolved,mapping_collision_count,mapping_coverage,available,estimable,reason,reason_code,missing_author_key,n_used,method,ci_low,ci_high,evidence_level
+32,24,0,24,8,0,0.75,True,False,No high-confidence plasma-to-animal links could be established; alias matches remain candidates.,PLASMA_BULK_ANIMAL_LINKAGE_MISSING,omix007581_plasma_sample_id_to_animal_id_group_sex_age;omix007580_bulk_rnaseq_sample_id_to_animal_id_tissue_group_sex_age,32,plasma_linkage_qc,,,0

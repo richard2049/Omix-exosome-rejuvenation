@@ -1,0 +1,2 @@
+available,estimable,reason,n_used,method,ci_low,ci_high,evidence_level,tier,n_overlap_animal_ids,reason_code,missing_author_key
+False,False,Mediation disabled by config (enable_mediation=False).,0,linear_mediation_bootstrap,,,0,unlinked,0,CONFIG_DISABLED,not_required
