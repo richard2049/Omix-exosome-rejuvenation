@@ -1,3 +1,6 @@
 # Preserve the archived output bytes and accept their CRLF line endings.
 /docs/evidence/*/*.csv -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 /docs/evidence/*/plasma_primary_contrast_summary.json -text
+# Keep regenerated demo fixtures byte-identical across checkouts.
+/data/PROCESSED/*_example.csv text eol=lf
+/data/PROCESSED/*_example.txt text eol=lf

@@ -37,14 +37,49 @@ mechanistic reference, deferred pending an independence and scope check.
 
 ## Data Profiles
 
-- `demo` uses reduced, tracked examples from `data/PROCESSED` and is intended
-  for reproducibility and smoke testing.
+- `demo` uses synthetic, tracked examples from `data/PROCESSED` for software
+  smoke testing.
 - `full` uses locally downloaded source data under `data/RAW/data`.
 - `auto` selects the full profile when those inputs are present and otherwise
   falls back to the demo profile.
 
-Raw source data are not distributed through Git and must remain immutable.
-Generated tables and figures belong in `results/` and `figures/`.
+Obtain full source datasets separately and keep them read-only. Generated
+tables and figures belong in `results/` and `figures/`.
+
+### Demo inputs and redistribution
+
+The five bundled demo inputs use generated values and fictional identifiers.
+They exercise the readers and output contracts, including the unresolved
+methylation sample-map path. To regenerate the inputs from the repository root:
+
+```bash
+python -m src.generate_demo_inputs --output-dir data/PROCESSED
+```
+
+The generator uses a fixed seed and reads no source datasets. The historical
+examples listed below precede these synthetic inputs. A request to OMIX for
+written confirmation about redistributing those excerpts is awaiting a
+response.
+
+Credit the study to [Lei et al., *Cell* (2025)](https://doi.org/10.1016/j.cell.2025.05.021)
+and cite each OMIX accession for the corresponding source data.
+
+| Historical demo file | Source and verified selection | Public redistribution |
+|---|---|---|
+| `OMIX007581-01_example.csv` | First 101 data rows of the deposited `OMIX007581-01.csv`, with all 34 columns. [OMIX007581](https://ngdc.cncb.ac.cn/omix/release/OMIX007581) | Pending verification |
+| `OMIX007582_beta_matrix_example.csv` | Values for 99 CpG sites and 10 technical sample columns match the locally prepared `OMIX007582_beta_matrix.csv`. The source accession is cited in the study's data availability statement. [OMIX007582](https://ngdc.cncb.ac.cn/omix/release/OMIX007582) | Pending verification |
+
+The comparison used the demo files at commit `da62d6b` and the source files
+identified by SHA-256 in the [September full-run manifest](evidence/2026-09-26/manifest.json).
+
+On 20 November 2026, both accession pages listed open access, and OMIX described
+free academic use in its [licensing guidance](https://ngdc.cncb.ac.cn/omix/docs?lang=en_GB).
+The current demo and release candidate use synthetic inputs while the request
+is pending. If permission is confirmed, record the applicable licence or written
+confirmation from OMIX or the rights holder, the exact files it covers, and
+any attribution or use conditions. The repository's [MIT licence](../LICENSE)
+applies to the project software. See the [ELIXIR guidance on third-party data
+licensing](https://rdmkit.elixir-europe.org/licensing).
 
 ### Inputs for the September full run
 

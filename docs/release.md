@@ -12,6 +12,7 @@ you used. For the reported September results, also cite the
 | Corrected standard full run, 26 September 2026 | Recorded HEAD `7b49ef43d1e01ea34ea16da930d7107339dc0874`, with working-tree changes at runtime. The [run manifest](evidence/2026-09-26/manifest.json) records the source fingerprint, runtime source file hashes, inputs, settings, and core package versions. |
 | Subsequent public integration | [PR #15](https://github.com/richard2049/Omix-exosome-rejuvenation/pull/15) integrated the corrected workflow at `8abd9d0f968236093ae857ae076085ad59de361a`. The merge is a review milestone. The recorded run fingerprint describes the earlier working tree. |
 | Code baseline for release preparation | `8425dc7bb42aae79d5b10aebdb1ad76affb5050a`, the [PR #16 merge](https://github.com/richard2049/Omix-exosome-rejuvenation/pull/16) that added numerical and scientific guardrail checks. Verified against GitHub `main` on 20 November 2026. |
+| Full-profile comparison, 20 November 2026 | A private run of `da62d6b` used the same 11 input hashes and effective analysis settings. All shared values and statuses agreed across 34 tables. The mouse effect table added three validation diagnostics. |
 
 The source hashes identify the files used at runtime. Exact reconstruction of the
 dirty working tree and full package builds remains unverified. A checkout of a
@@ -41,6 +42,8 @@ evidence linked to the run that generated it.
 
 1. Review the snapshot, source and environment caveats, and redistribution scope.
    Verify the included hashes and link the associated report figure sources.
+   Confirm that the release bundles [synthetic demo inputs](datasets.md#demo-inputs-and-redistribution)
+   while OMIX reviews the request about the historical excerpts.
 2. Exact replay of the September run requires the recorded runtime source and
    environment. A new full-profile run under a reviewed commit can assess
    numerical agreement with the archived snapshot. Record its date, source

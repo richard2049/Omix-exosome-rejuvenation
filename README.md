@@ -167,7 +167,7 @@ for the complete claim rules.
 
 ## Reproduce the Analysis
 
-The public demo checks that the software runs on reduced example data and
+The public demo checks that the software runs on synthetic example data and
 produces the expected output tables.
 
 ```bash
@@ -202,7 +202,7 @@ for input requirements and the limits of recreating the September run.
 |---|---|
 | `src/` | Analysis, audit, attribution, and reporting modules |
 | `tests/` | Automated scientific guardrails and smoke tests |
-| `data/PROCESSED/` | Reduced example inputs for the demo profile |
+| `data/PROCESSED/` | Synthetic inputs for the demo. [Generation and source data](docs/datasets.md#demo-inputs-and-redistribution) |
 | `results/`, `figures/` | Generated machine-readable outputs and figures |
 | `docs/` | Study context, evidence rules, dataset audits, reproducibility, and output reference |
 

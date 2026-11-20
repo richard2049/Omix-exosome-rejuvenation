@@ -48,7 +48,7 @@ The pipeline has one entry point and three data-selection profiles.
 
 | Profile | Inputs and availability | Analysis and output scope | Use for reported results |
 |---|---|---|---|
-| `demo --safe` | Reduced examples bundled in `data/PROCESSED/` | Laptop smoke test with reduced feature and resampling settings. Outputs exercise the table contracts, including records for unavailable analyses. | Checks software behavior. It produces demo figures and statistics. |
+| `demo --safe` | Synthetic examples bundled in `data/PROCESSED/` | Laptop smoke test with reduced feature and resampling settings. Outputs exercise the table contracts, including records for unavailable analyses. | Checks software behavior. It produces demo figures and statistics. |
 | `full` | Separately downloaded datasets and prepared inputs described in the [dataset guide](datasets.md) | Standard animal-level fits and resampling. Generates the full set of result tables and diagnostics allowed by the input and identity checks. | This is the profile required to recompute the reported analyses. Match input hashes, settings, and source state. |
 | `auto` (default) | Looks for the full profile's bulk input first, then the demo input | Uses the configuration of the selected profile. Check the resolved `data_profile` in the run manifest. | Use an explicit profile for verification so the input selection is clear. |
 
@@ -210,6 +210,7 @@ analysis or replace diagnostic plots.
 
 Pull requests and updates to `main` run compilation, the complete test suite,
 the safe demo, and its output validator in the activated Conda environment.
+Updates to `release/**` branches run the same checks on the exact pushed commit.
 These checks cover the software path and result schemas. Scientific judgments
 about the study design, metadata, and causal interpretation require separate
 review. [Technical integrity workflow](https://github.com/richard2049/Omix-exosome-rejuvenation/actions/workflows/ci.yml).
@@ -277,7 +278,8 @@ Use `--max-prefixes` or `--prefixes` before attempting the complete archive.
 
 ### The full profile cannot find source files
 
-The public repository contains reduced examples, not the full OMIX downloads.
+The public repository contains synthetic examples. Obtain the full OMIX
+downloads separately.
 Use `--profile demo` to verify the installation, or place independently
 downloaded source files under the configured full-data root and use
 `--profile full`. Do not rename samples or edit raw files to satisfy a loader.
