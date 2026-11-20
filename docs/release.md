@@ -18,22 +18,12 @@ Exact replay of September requires the recorded source state and environment.
 The full reconstruction of those files and package builds remains unverified.
 The November run documents numerical agreement on the same inputs.
 
-## Proposed `v0.3.0` release
+## `v0.3.0`
 
-The proposed minor version follows the exploratory `v0.2` series and marks
-the revised analysis workflow and its documented evidence.
+[Release notes and downloads](https://github.com/richard2049/Omix-exosome-rejuvenation/releases/tag/v0.3.0)
+for the revised analysis workflow, September evidence, and synthetic demo.
 
-### Draft release description
-
-> OMIX Exosome Rejuvenation v0.3.0 documents the corrected full-profile
-> workflow, links to aggregate evidence from September 2026, and includes
-> a synthetic demo. In macaques, an animal-grouped, controls-only
-> transcriptomic clock and animal-level treatment contrasts gave no robust
-> evidence of transcriptomic rejuvenation after SRC treatment. Plasma and
-> three-tissue mouse comparisons remain exploratory. Confirmed plasma–tissue
-> links and a biological methylation sample map remain unavailable.
-
-### Release checklist
+## Release checklist
 
 1. Check the evidence hashes and [figure sources](assets/README.md). Verify
    that the source archive bundles the [synthetic demo inputs](datasets.md#demo-inputs-and-redistribution).
